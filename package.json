@@ -19,5 +19,9 @@
   "homepage": "https://github.com/eld-dlh/NovaSentinel#readme",
   "devDependencies": {
     "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "satellite.js": "^7.0.0",
+    "three": "^0.184.0"
   }
 }
