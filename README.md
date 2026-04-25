@@ -1,0 +1,3 @@
+# NovaSentinel
+
+Project scaffold generated.

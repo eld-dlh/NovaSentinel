@@ -1,0 +1,1 @@
+// Batched catalogue propagation + caching
