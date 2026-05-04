@@ -28,8 +28,10 @@
 // Constants
 // ---------------------------------------------------------------------------
 
-const SPACETRACK_BASE  = 'https://www.space-track.org/basicspacedata/query';
-const SPACETRACK_LOGIN = 'https://www.space-track.org/ajaxauth/login';
+// Use relative /spacetrack/* paths so the Vite dev proxy intercepts them.
+// This avoids CORS — the browser only talks to localhost, never space-track.org directly.
+const SPACETRACK_BASE  = '/spacetrack/basicspacedata/query';
+const SPACETRACK_LOGIN = '/spacetrack/ajaxauth/login';
 const CDM_CLASS        = 'cdm_public';
 
 /** Default minimum PoC — filters negligible conjunctions client-side */
