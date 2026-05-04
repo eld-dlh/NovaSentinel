@@ -14,21 +14,38 @@ import { filterValidTLEs } from './tleValidator.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** CelesTrak GP (General Perturbations) 3-line TLE endpoint for all active sats */
-const CELESTRAK_TLE_URL =
-  'https://celestrak.org/SPACETRACK/query/class/gp/CURRENT/1/format/tle/';
+/** CelesTrak GP endpoint base — all group queries go through gp.php */
+const CELESTRAK_BASE_URL = 'https://celestrak.org/NORAD/elements/gp.php';
 
-/** CelesTrak GP OMM JSON endpoint (same catalogue, richer fields) */
+/**
+ * CelesTrak GP OMM JSON endpoint.
+ * Same catalogue as the TLE groups but returns structured JSON — used by ommParser.js.
+ */
 export const CELESTRAK_OMM_URL =
-  'https://celestrak.org/SPACETRACK/query/class/gp/CURRENT/1/format/json/';
+  `${CELESTRAK_BASE_URL}?GROUP=active&FORMAT=json`;
 
-/** Named group shortcuts → query parameter overrides */
+/**
+ * Named group shortcuts mapped to their CelesTrak GROUP query-parameter URLs.
+ *
+ * Using GROUP= queries (rather than legacy path-style URLs) is preferred:
+ *   • More reliable on CelesTrak's servers
+ *   • Automatically includes new objects as they are catalogued
+ *   • Directly mirrors the groups shown in the CelesTrak web UI
+ */
 const GROUP_URLS = {
-  active:   CELESTRAK_TLE_URL,
-  stations: 'https://celestrak.org/SPACETRACK/query/class/gp/INTLDES/1998-067/format/tle/',
-  starlink: 'https://celestrak.org/SPACETRACK/query/class/gp/NAME/STARLINK/format/tle/',
-  oneweb:   'https://celestrak.org/SPACETRACK/query/class/gp/NAME/ONEWEB/format/tle/',
-  debris:   'https://celestrak.org/SPACETRACK/query/class/gp/DECAY/null/format/tle/',
+  // Special-interest satellites
+  active:          `${CELESTRAK_BASE_URL}?GROUP=active&FORMAT=tle`,
+  last30Days:      `${CELESTRAK_BASE_URL}?GROUP=last-30-days&FORMAT=tle`,
+  stations:        `${CELESTRAK_BASE_URL}?GROUP=stations&FORMAT=tle`,   // ISS + Tiangong + others
+  brightest:       `${CELESTRAK_BASE_URL}?GROUP=visual&FORMAT=tle`,      // ~100 brightest objects
+
+  // Communications constellations
+  starlink:        `${CELESTRAK_BASE_URL}?GROUP=starlink&FORMAT=tle`,
+  oneweb:          `${CELESTRAK_BASE_URL}?GROUP=oneweb&FORMAT=tle`,
+  iridium:         `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
+
+  // Debris
+  debris_fengyun:  `${CELESTRAK_BASE_URL}?GROUP=1999-025G&FORMAT=tle`, // Fengyun-1C debris field
 };
 
 /** Default fetch interval: 6 hours (CelesTrak refresh cadence) */
