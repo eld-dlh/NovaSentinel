@@ -5,6 +5,12 @@
 //
 // Fetch endpoint: https://celestrak.org/SOCRATES/query.php?format=json
 // (or the GP endpoint: https://celestrak.org/SPACETRACK/query/class/gp/CURRENT/1/format/json/)
+//
+// CelesTrak OMM JSON includes TLE_LINE1 / TLE_LINE2 fields, which we feed
+// to satellite.js twoline2satrec() so OMM records are SGP4-propagatable
+// exactly like native TLE records.
+
+import * as satellite from 'satellite.js';
 
 // ---------------------------------------------------------------------------
 // Single-record parser
@@ -63,6 +69,27 @@ export function parseOMM(omm) {
     return null;
   }
 
+  // --- Build satrec from embedded TLE lines (present in CelesTrak GP JSON) ---
+  const line1  = omm.TLE_LINE1 ?? null;
+  const line2  = omm.TLE_LINE2 ?? null;
+  let   satrec = null;
+
+  if (line1 && line2) {
+    try {
+      satrec = satellite.twoline2satrec(line1, line2);
+      if (satrec.error !== 0) {
+        console.warn(
+          `[ommParser] satrec init error ${satrec.error} for NORAD ${omm.NORAD_CAT_ID}`
+        );
+        satrec = null; // keep the record but mark as non-propagatable
+      }
+    } catch (e) {
+      console.warn(
+        `[ommParser] twoline2satrec failed for NORAD ${omm.NORAD_CAT_ID}:`, e.message
+      );
+    }
+  }
+
   return {
     // Identity
     noradId:       String(omm.NORAD_CAT_ID).trim(),
@@ -70,6 +97,11 @@ export function parseOMM(omm) {
 
     // Temporal
     epoch,
+
+    // SGP4 propagation support (null if TLE lines were absent or invalid)
+    satrec,
+    line1,
+    line2,
 
     // Keplerian elements (standard units matching TLE output)
     meanMotion:    parseFloat(omm.MEAN_MOTION),         // rev/day

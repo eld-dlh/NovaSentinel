@@ -13,4 +13,20 @@ export default defineConfig({
       },
     },
   },
+
+  // satellite.js v7 ships a WASM/pthreads build with top-level await.
+  // Workers must be bundled as ES modules (not IIFE) to support TLA.
+  worker: {
+    format: 'es',
+  },
+
+  // Ensure satellite.js is pre-bundled for the main thread but not
+  // double-bundled inside Workers (Vite handles Worker deps separately).
+  optimizeDeps: {
+    include: ['satellite.js', 'three'],
+  },
+
+  build: {
+    target: 'esnext',   // support top-level await in production
+  },
 });
