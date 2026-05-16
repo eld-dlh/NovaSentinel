@@ -1,9 +1,12 @@
-// Offline model training script — Node.js
+// Offline model training script — Node.js (pure-JS TensorFlow)
 //
 // Trains the PoC regression model on conjunction event data and exports
 // TensorFlow.js-compatible weights to public/model/.
 //
 // Run:  node scripts/trainModel.js
+//
+// Uses @tensorflow/tfjs (pure JavaScript — no native C++ bindings required).
+// Training is slower than tfjs-node but avoids compilation issues on Windows.
 //
 // Pipeline:
 //   1. Load data/cara-events.json (or generate synthetic if absent)
@@ -13,35 +16,25 @@
 //   5. Evaluate precision/recall/F1 on test set
 //   6. Export model to public/model/
 
-import * as tf from '@tensorflow/tfjs-node';
-import { readFileSync, existsSync } from 'fs';
+import * as tf from '@tensorflow/tfjs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
-// Import shared modules — these are ES modules so we use dynamic path resolution
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 const ROOT       = join(__dirname, '..');
 
-// We need to import from src/ml/ but these use the same pure-JS normalisation
-// Since we're in Node with tfjs-node, we import the shared utilities directly
-
 // ---------------------------------------------------------------------------
-// Inline the shared normalisation (avoids ESM resolution issues in Node)
+// Inline the shared normalisation (identical to src/ml/features.js)
 // ---------------------------------------------------------------------------
 
 const NORM = Object.freeze({
-  MISS_DIST_MAX_KM:   50,
-  REL_VEL_MAX_KMS:    15,
-  MAHAL_SOFT_CAP:     20,
-  COV_LOG_MIN:        -4,
-  COV_LOG_RANGE:      10,
-  ALT_MIN_KM:         200,
-  ALT_MAX_KM:         2000,
-  BSTAR_CLIP:         0.1,
-  TLE_AGE_MAX_DAYS:   30,
-  NUM_FEATURES:       15,
+  MISS_DIST_MAX_KM: 50, REL_VEL_MAX_KMS: 15, MAHAL_SOFT_CAP: 20,
+  COV_LOG_MIN: -4, COV_LOG_RANGE: 10,
+  ALT_MIN_KM: 200, ALT_MAX_KM: 2000, BSTAR_CLIP: 0.1,
+  TLE_AGE_MAX_DAYS: 30, NUM_FEATURES: 15,
 });
 
 function normMissDistance(km) {
@@ -68,8 +61,7 @@ function normCovVector(cov6) {
   return cov6.map((v, i) => normCovElement(v, diag.has(i)));
 }
 function relativeInclinationFeature(inc1, inc2, raanDiff = 0) {
-  const i1 = inc1 * Math.PI / 180;
-  const i2 = inc2 * Math.PI / 180;
+  const i1 = inc1 * Math.PI / 180, i2 = inc2 * Math.PI / 180;
   const dr = raanDiff * Math.PI / 180;
   const cosIM = Math.cos(i1)*Math.cos(i2) + Math.sin(i1)*Math.sin(i2)*Math.cos(dr);
   return Math.acos(Math.min(1, Math.max(-1, cosIM))) / Math.PI;
@@ -159,6 +151,50 @@ function computeMetrics(preds, labels, threshold = 0.5) {
 }
 
 // ---------------------------------------------------------------------------
+// Custom filesystem IOHandler (replaces file:// which requires tfjs-node)
+// ---------------------------------------------------------------------------
+
+function fileSystemSaveHandler(modelDir) {
+  mkdirSync(modelDir, { recursive: true });
+
+  return {
+    async save(modelArtifacts) {
+      const weightData = modelArtifacts.weightData;
+      const weightBuf = Buffer.from(
+        weightData instanceof ArrayBuffer ? weightData : weightData.buffer
+      );
+      const weightsPath = join(modelDir, 'group1-shard1of1.bin');
+      writeFileSync(weightsPath, weightBuf);
+
+      const modelJSON = {
+        modelTopology: modelArtifacts.modelTopology,
+        weightsManifest: [{
+          paths: ['group1-shard1of1.bin'],
+          weights: modelArtifacts.weightSpecs,
+        }],
+        format: modelArtifacts.format,
+        generatedBy: modelArtifacts.generatedBy,
+        convertedBy: modelArtifacts.convertedBy,
+      };
+      if (modelArtifacts.trainingConfig) {
+        modelJSON.trainingConfig = modelArtifacts.trainingConfig;
+      }
+
+      const modelPath = join(modelDir, 'poc-model.json');
+      writeFileSync(modelPath, JSON.stringify(modelJSON, null, 2));
+
+      return {
+        modelArtifactsInfo: {
+          dateSaved: new Date(),
+          modelTopologyType: 'JSON',
+          weightDataBytes: weightBuf.length,
+        },
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main training pipeline
 // ---------------------------------------------------------------------------
 
@@ -202,7 +238,21 @@ async function main() {
   const xVal   = tf.tensor2d(valX);
   const yVal   = tf.tensor2d(valY, [valY.length, 1]);
 
-  // 6. Build model
+  // 6. Build model with weighted binary cross-entropy loss
+  // (sampleWeight is not supported in tfjs pure-JS, so we embed weights in the loss)
+  const posWeight = classWeights[1];
+  const negWeight = classWeights[0];
+
+  function weightedBCE(yTrue, yPred) {
+    // Clamp predictions to avoid log(0)
+    const eps = 1e-7;
+    const clipped = yPred.clipByValue(eps, 1 - eps);
+    // Weighted binary cross-entropy
+    const posLoss = yTrue.mul(clipped.log()).mul(posWeight);
+    const negLoss = yTrue.mul(-1).add(1).mul(tf.sub(1, clipped).log()).mul(negWeight);
+    return posLoss.add(negLoss).mul(-1).mean();
+  }
+
   const model = tf.sequential({ name: 'poc-collision-model' });
   model.add(tf.layers.dense({
     inputShape: [NORM.NUM_FEATURES], units: 64, activation: 'relu',
@@ -218,23 +268,18 @@ async function main() {
 
   model.compile({
     optimizer: tf.train.adam(1e-3),
-    loss: 'binaryCrossentropy',
+    loss: weightedBCE,
     metrics: ['accuracy'],
   });
 
   model.summary();
 
-  // 7. Build sample weights tensor for class imbalance
-  const sampleWeights = tf.tensor1d(
-    trainY.map(l => l === 1 ? classWeights[1] : classWeights[0])
-  );
-
-  // 8. Train with early stopping
+  // 7. Train with early stopping
   console.info('\n[train] Starting training...\n');
   let bestValLoss = Infinity;
   let patience = 10;
   let wait = 0;
-  const EPOCHS = 100;
+  const EPOCHS = 50;
   const BATCH = 64;
 
   for (let epoch = 0; epoch < EPOCHS; epoch++) {
@@ -242,7 +287,6 @@ async function main() {
       epochs: 1,
       batchSize: BATCH,
       validationData: [xVal, yVal],
-      sampleWeight: sampleWeights,
       verbose: 0,
     });
 
@@ -258,7 +302,6 @@ async function main() {
       );
     }
 
-    // Early stopping
     const currentValLoss = history.history.val_loss[0];
     if (currentValLoss < bestValLoss) {
       bestValLoss = currentValLoss;
@@ -284,7 +327,6 @@ async function main() {
   console.info(`  F1 Score:  ${metrics.f1.toFixed(4)}`);
   console.info(`  TP=${metrics.tp}  FP=${metrics.fp}  FN=${metrics.fn}  TN=${metrics.tn}`);
 
-  // Also evaluate at lower threshold (optimise for recall)
   const metricsLow = computeMetrics(Array.from(predValues), testY, 0.3);
   console.info(`\n  At threshold 0.3:`);
   console.info(`  Precision: ${metricsLow.precision.toFixed(4)}`);
@@ -293,16 +335,14 @@ async function main() {
 
   // 10. Save model
   const modelDir = join(ROOT, 'public', 'model');
-  const savePath = `file://${modelDir}`;
-  await model.save(savePath);
+  await model.save(fileSystemSaveHandler(modelDir));
   console.info(`\n[train] Model saved to ${modelDir}`);
-  console.info('[train] Files: poc-model.json + weight shard(s)');
+  console.info('[train] Files: poc-model.json + group1-shard1of1.bin');
 
   // Cleanup
   xTrain.dispose(); yTrain.dispose();
   xVal.dispose(); yVal.dispose();
   xTest.dispose(); predTensor.dispose();
-  sampleWeights.dispose();
 
   console.info('\n=== Training complete ===');
 }

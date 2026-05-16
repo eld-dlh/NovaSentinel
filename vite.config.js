@@ -20,10 +20,10 @@ export default defineConfig({
     format: 'es',
   },
 
-  // Ensure satellite.js is pre-bundled for the main thread but not
-  // double-bundled inside Workers (Vite handles Worker deps separately).
+  // Ensure satellite.js, TensorFlow.js, and Three.js are pre-bundled for the
+  // main thread but not double-bundled inside Workers.
   optimizeDeps: {
-    include: ['satellite.js', 'three'],
+    include: ['satellite.js', 'three', '@tensorflow/tfjs'],
   },
 
   build: {

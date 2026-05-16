@@ -23,7 +23,6 @@
   },
   "homepage": "https://github.com/eld-dlh/NovaSentinel#readme",
   "devDependencies": {
-    "@tensorflow/tfjs-node": "^4.22.0",
     "vite": "^8.0.10"
   },
   "dependencies": {

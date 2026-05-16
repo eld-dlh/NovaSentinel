@@ -103,21 +103,26 @@ function generateEvent(id) {
 
   // ---- Label: collision probability score ----
   // Physics-inspired: PoC increases with lower miss distance, higher velocity,
-  // lower Mahalanobis, and debris involvement
-  let logitScore = -3.0; // base (low risk)
-  logitScore -= 2.0 * Math.log1p(missDistanceKm);
-  logitScore += 0.5 * (relVelocityKms / 15);
+  // lower Mahalanobis, and debris involvement.
+  // Calibrated to produce ~5-10% positive labels (pocScore > 0.5).
+  let logitScore = 1.0; // start slightly positive
+  // Miss distance is the dominant factor: low = dangerous
+  // log1p(missDistanceKm) ranges ~0 (near miss) to ~3.9 (50 km)
+  // Subtract a scaled version so small miss distances push logit up
+  logitScore -= 1.5 * Math.log1p(missDistanceKm);
+  // Relative velocity: head-on encounters are more dangerous
+  logitScore += 0.4 * (relVelocityKms / 15);
   if (mahalanobisDistance !== null) {
-    logitScore -= 0.8 * Math.log1p(mahalanobisDistance);
+    logitScore -= 0.5 * Math.log1p(mahalanobisDistance);
   }
-  if (isDebris) logitScore += 0.5;
-  logitScore += 0.3 * (tleAgeDays / 30);
-  // Altitude risk bands
+  if (isDebris) logitScore += 0.6;
+  logitScore += 0.2 * (tleAgeDays / 30);
+  // Altitude risk bands (550 km and 850 km per McKnight)
   const altAvg = (altPrimaryKm + altSecondaryKm) / 2;
-  if (altAvg > 500 && altAvg < 600) logitScore += 0.3;
-  if (altAvg > 800 && altAvg < 900) logitScore += 0.3;
-  // Add noise
-  logitScore += randNormal(0, 0.5);
+  if (altAvg > 500 && altAvg < 600) logitScore += 0.4;
+  if (altAvg > 800 && altAvg < 900) logitScore += 0.4;
+  // Noise to avoid a perfectly learnable boundary
+  logitScore += randNormal(0, 0.8);
 
   const pocScore = 1 / (1 + Math.exp(-logitScore));
   // Binary label: threshold at 0.5 for training
