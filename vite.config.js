@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve }      from 'path';
 
 export default defineConfig({
   server: {
@@ -20,10 +21,10 @@ export default defineConfig({
     format: 'es',
   },
 
-  // Ensure satellite.js, TensorFlow.js, and Three.js are pre-bundled for the
-  // main thread but not double-bundled inside Workers.
+  // Ensure satellite.js, TensorFlow.js, Three.js, and Brain.js are pre-bundled
+  // for the main thread but not double-bundled inside Workers.
   optimizeDeps: {
-    include: ['satellite.js', 'three', '@tensorflow/tfjs'],
+    include: ['satellite.js', 'three', '@tensorflow/tfjs', 'brain.js'],
   },
 
   build: {
