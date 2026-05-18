@@ -204,8 +204,8 @@ async function main() {
   // 1. Load or generate data
   const dataPath = join(ROOT, 'data', 'cara-events.json');
   if (!existsSync(dataPath)) {
-    console.info('[train] No data found — generating synthetic data...');
-    execSync(`node "${join(ROOT, 'scripts', 'generateSyntheticData.js')}"`, { stdio: 'inherit' });
+    console.info('[train] No data found — fetching real CDMs from Space-Track...');
+    execSync(`node "${join(ROOT, 'scripts', 'fetchRealCDMs.js')}"`, { stdio: 'inherit' });
   }
 
   const rawData = JSON.parse(readFileSync(dataPath, 'utf-8'));
