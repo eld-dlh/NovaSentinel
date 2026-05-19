@@ -17,7 +17,9 @@ import './style.css';
 // ── Data layer ────────────────────────────────────────────────────────────
 import { startTLEPolling, onTLEUpdate }                from './data/tleFetch.js';
 import { loginSpaceTrack, startNormalPolling,
-         onCDMUpdate }                                 from './data/cdmFetch.js';
+         onCDMUpdate,
+         postRejectionToDjango,
+         postConjunctionToDjango }                    from './data/cdmFetch.js';
 import { cdmToEllipsoidAxes }                         from './data/cdmCovariance.js';
 
 // ── Propagation ───────────────────────────────────────────────────────────
@@ -153,7 +155,19 @@ onTLEUpdate((records, fetchedAt) => {
   setTimeout(() => _runDecayPipeline(records), 0);
 });
 
-startTLEPolling({ group: 'active', maxAgeDays: 30 });
+startTLEPolling({
+  group: 'active', maxAgeDays: 30,
+  // auditLog array: every rejected TLE entry is forwarded to the Django DB
+  auditLog: {
+    push(entry) {
+      postRejectionToDjango({
+        noradId: entry.noradId,
+        name:    entry.name,
+        reason:  entry.reason,
+      });
+    }
+  },
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Brain.js LSTM decay pipeline
@@ -285,6 +299,22 @@ onCDMUpdate(async (records, fetchedAt) => {
     const id2 = String(cdm.SAT2_NORAD_CAT_ID ?? '');
     if (id1) _pocMap.set(id1, Math.max(_pocMap.get(id1) ?? 0, pocScore));
     if (id2) _pocMap.set(id2, Math.max(_pocMap.get(id2) ?? 0, pocScore));
+
+    // Persist to Django when PoC exceeds the minimum threshold (1e-6)
+    if (pocScore >= 1e-6) {
+      postConjunctionToDjango({
+        noradPrimary:   String(cdm.SAT1_NORAD_CAT_ID ?? ''),
+        namePrimary:    cdm.SAT1_OBJECT_DESIGNATOR ?? '',
+        noradSecondary: String(cdm.SAT2_NORAD_CAT_ID ?? ''),
+        nameSecondary:  cdm.SAT2_OBJECT_DESIGNATOR ?? '',
+        pocScore:       pocScore,
+        missDistance:   parseFloat(cdm.MISS_DISTANCE ?? 0),
+        relVelocity:    parseFloat(cdm.RELATIVE_SPEED ?? 0),
+        tca:            cdm.TCA ?? new Date().toISOString(),
+        isDebris:       (cdm.SAT2_OBJECT_TYPE ?? '').toUpperCase().includes('DEBRIS'),
+        cdmId:          cdm.CDM_ID ?? '',
+      });
+    }
   }
 
   // Patch CDM records with ML PoC where CDM field is missing

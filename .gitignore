@@ -1,6 +1,20 @@
 node_modules/
+dist/
 
 # Environment variables — NEVER commit credentials
 .env
 .env.local
 .env.*.local
+
+# Django
+db.sqlite3
+staticfiles/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.Python
+
+# Django migrations are committed, but keep generated cache out
+*.pyc
