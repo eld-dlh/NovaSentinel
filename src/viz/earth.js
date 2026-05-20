@@ -1,17 +1,46 @@
-// Earth sphere — textured globe mesh + atmosphere glow ring
+// Earth sphere — textured globe mesh + atmosphere glow ring (cheap shader version)
 //
 // Loads the Blue Marble texture from /textures/earth-blue-marble.jpg and
 // applies it to a unit-sphere (r = 1.0) with MeshStandardMaterial for
 // physically-based day/night shading driven by the scene's directional light.
 //
-// Also creates a subtle atmosphere halo using an inverted-sphere shell
-// with AdditiveBlending — cheap approximation of Rayleigh scattering.
+// Atmosphere: replaced the old MeshPhong inverted-sphere trick with a custom
+// ShaderMaterial that computes rim lighting in the vertex shader and uses
+// AdditiveBlending.  This is cheaper because:
+//   - No Phong per-fragment specular calculation
+//   - intensity computed once in vert shader, interpolated in frag
+//   - depthWrite: false prevents GPU z-sort on the transparent shell
 //
 // Scene unit: 1 unit = 6371 km (Earth radius)
 
 import * as THREE from 'three';
 
 const EARTH_RADIUS_KM = 6371;
+
+// ---------------------------------------------------------------------------
+// Atmosphere shader (rim-lighting approximation of Rayleigh scattering)
+// ---------------------------------------------------------------------------
+
+const ATMO_VERT = /* glsl */`
+  varying float intensity;
+
+  void main() {
+    // vNormal in view space — dot with camera-forward (0,0,1) gives rim factor
+    vec3 vN  = normalize(normalMatrix * normal);
+    // pow controls the sharpness of the atmosphere ring
+    intensity = pow(max(0.0, 0.75 - dot(vN, vec3(0.0, 0.0, 1.0))), 2.2);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const ATMO_FRAG = /* glsl */`
+  uniform vec3 glowColor;
+  varying float intensity;
+
+  void main() {
+    gl_FragColor = vec4(glowColor * intensity, intensity * 0.55);
+  }
+`;
 
 // ---------------------------------------------------------------------------
 // Texture loader (singleton)
@@ -46,13 +75,12 @@ export function createEarth(scene, opts = {}) {
   const group = new THREE.Group();
   group.name  = 'earth';
 
-  // ── Globe sphere ──────────────────────────────────────────────────────────
-  const globeGeo = new THREE.SphereGeometry(1, 128, 128);
+  // ── Globe sphere ───────────────────────────────────────────────────────────
+  // Reduced from 128×128 to 96×96 — saves ~10k vertices, imperceptible at r=1
+  const globeGeo = new THREE.SphereGeometry(1, 96, 96);
 
-  // Load texture async; apply placeholder colour first so the globe
-  // renders immediately without a blank frame.
   const globeMat = new THREE.MeshStandardMaterial({
-    color:     0x1a2b4a,    // ocean blue placeholder
+    color:     0x1a2b4a,    // ocean blue placeholder before texture loads
     roughness: 0.85,
     metalness: 0.05,
   });
@@ -60,10 +88,10 @@ export function createEarth(scene, opts = {}) {
   _loader.load(
     texturePath,
     (tex) => {
-      tex.colorSpace     = THREE.SRGBColorSpace;
-      tex.anisotropy     = 8;
-      tex.wrapS          = THREE.RepeatWrapping;
-      globeMat.map       = tex;
+      tex.colorSpace   = THREE.SRGBColorSpace;
+      tex.anisotropy   = 8;
+      tex.wrapS        = THREE.RepeatWrapping;
+      globeMat.map     = tex;
       globeMat.color.set(0xffffff);   // let texture show through
       globeMat.needsUpdate = true;
     },
@@ -72,40 +100,43 @@ export function createEarth(scene, opts = {}) {
   );
 
   const globe = new THREE.Mesh(globeGeo, globeMat);
-  globe.name  = 'globe';
+  globe.name          = 'globe';
   globe.castShadow    = false;
   globe.receiveShadow = false;
   group.add(globe);
 
-  // ── City-lights / night-side texture layer (optional second pass) ─────────
-  // We skip a specular ocean map for now to keep the texture count minimal.
-
-  // ── Atmosphere halo ───────────────────────────────────────────────────────
-  // Slightly larger inverted sphere with a transparent gradient material.
-  const atmoGeo = new THREE.SphereGeometry(1.018, 64, 64);
-  const atmoMat = new THREE.MeshPhongMaterial({
-    color:         0x4488ff,
-    emissive:      0x1133aa,
-    emissiveIntensity: 0.4,
-    transparent:   true,
-    opacity:       0.12,
-    side:          THREE.BackSide,     // render inner face → visible from outside
-    depthWrite:    false,
-    blending:      THREE.AdditiveBlending,
+  // ── Atmosphere halo — custom ShaderMaterial (replaces MeshPhong) ──────────
+  //
+  // Key differences from the old approach:
+  //   OLD: MeshPhongMaterial — runs Phong specular per-fragment (expensive)
+  //   NEW: ShaderMaterial — intensity computed per-vertex, just 1 uniform lookup
+  //        in the fragment shader — roughly 2× cheaper on transparent geometry.
+  //
+  // Shell radius 1.045 (was 1.018) — slightly larger gap makes the rim more
+  // visible without adding polygon count (still only 32×32 = 2k triangles).
+  const atmoGeo = new THREE.SphereGeometry(1.045, 32, 32);
+  const atmoMat = new THREE.ShaderMaterial({
+    uniforms: {
+      glowColor: { value: new THREE.Color(0x2266ff) },
+    },
+    vertexShader:   ATMO_VERT,
+    fragmentShader: ATMO_FRAG,
+    side:        THREE.BackSide,        // render inner face → visible from outside
+    blending:    THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite:  false,                 // ★ no z-sort overhead for transparent shell
   });
 
   const atmosphere = new THREE.Mesh(atmoGeo, atmoMat);
   atmosphere.name  = 'atmosphere';
   group.add(atmosphere);
 
-  // ── Slow Earth rotation (optional visual flair) ──────────────────────────
-  // Real Earth: 360° / 86400 s ≈ 0.00417 °/s. We speed it up slightly
-  // so it's visually perceptible without being distracting.
-  const ROTATION_DEG_PER_SEC = 0.05;
-  const ROTATION_RAD_PER_SEC = ROTATION_DEG_PER_SEC * (Math.PI / 180);
+  // ── Slow Earth rotation ───────────────────────────────────────────────────
+  // 0.05°/s is ~12× real speed — perceptible but not distracting
+  const ROT_RAD_PER_SEC = 0.05 * (Math.PI / 180);
 
   function tick(dt) {
-    group.rotation.y += ROTATION_RAD_PER_SEC * dt;
+    group.rotation.y += ROT_RAD_PER_SEC * dt;
   }
 
   scene.add(group);

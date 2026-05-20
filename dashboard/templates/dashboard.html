@@ -293,6 +293,7 @@
     (built by `npm run build` and collected by `manage.py collectstatic`).
   -->
   {% if debug %}
+  <script type="module" src="http://localhost:5173/@vite/client"></script>
   <script type="module" src="http://localhost:5173/src/main.js"></script>
   {% else %}
   <script type="module" src="{% static 'assets/index.js' %}"></script>

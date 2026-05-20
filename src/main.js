@@ -62,9 +62,9 @@ const { renderer, scene, camera, controls } = ctx;
 const earth = createEarth(scene);
 
 // Satellite point cloud (up to 12k objects)
+// pointSize removed — per-satellite sizes now set via sizeBuf in updateCataloguePositions()
 const cloud = createCatalogueCloud(scene, {
   maxObjects:   12_000,
-  pointSize:    2.8,
   defaultColor: new THREE.Color(0x4fc3f7),
 });
 
@@ -103,7 +103,7 @@ const stopLoop = startRenderLoop(ctx, (dt) => {
 
 const propagator = createPropagator({
   intervalMs: 30_000,
-  useWorker:  typeof Worker !== 'undefined',
+  useWorker:  typeof Worker !== 'undefined' && !import.meta.env.DEV,
   onError(errors) {
     if (errors.length > 0)
       console.warn(`[main] ${errors.length} propagation errors`);

@@ -21,3 +21,11 @@ urlpatterns = [
 # Serve static & media in DEBUG mode (Vite dist/ is exposed as /static/)
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    
+    # Serve Vite's public folder at the root (for /textures, /model, etc)
+    from django.views.static import serve
+    import os
+    public_dir = os.path.join(settings.BASE_DIR, 'public')
+    urlpatterns += [
+        path('<path:path>', serve, {'document_root': public_dir}),
+    ]

@@ -3,6 +3,8 @@ import { resolve }      from 'path';
 
 export default defineConfig({
   server: {
+    cors: true,
+    origin: 'http://localhost:5173',
     proxy: {
       // All requests to /spacetrack/* are forwarded to space-track.org.
       // The browser only ever sees localhost — no CORS issue.
