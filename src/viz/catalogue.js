@@ -46,11 +46,11 @@ const SAT_VERT = /* glsl */`
 
   void main() {
     vColor  = color;
-    vAlpha  = 1.0;
+    vAlpha  = 0.82;   // slightly transparent — lets Earth show through overlap
 
     vec4 mvPos  = modelViewMatrix * vec4(position, 1.0);
-    // Perspective point-size: larger closer to camera
-    gl_PointSize = size * (280.0 / -mvPos.z);
+    // Perspective point-size: keep dots small enough that Earth is visible
+    gl_PointSize = size * (40.0 / -mvPos.z);  // small dots — prevents overlap at 12k objects
     gl_Position  = projectionMatrix * mvPos;
   }
 `;
@@ -70,16 +70,13 @@ const SAT_FRAG = /* glsl */`
     vec2  uv = gl_PointCoord - 0.5;
     float d  = length(uv);
 
-    // Hard discard outside the circle — eliminates corner overdraw
+    // Hard discard outside the circle
     if (d > 0.5) discard;
 
-    // Soft glow: bright centre fading to transparent edge
-    float alpha = smoothstep(0.5, 0.05, d) * vAlpha;
+    // Hard circle — no soft bloom, no bleed between neighbouring dots
+    float alpha = vAlpha;
 
-    // Additive glow boost at the core
-    vec3 col = vColor + vColor * smoothstep(0.3, 0.0, d) * 0.6;
-
-    gl_FragColor = vec4(col, alpha);
+    gl_FragColor = vec4(vColor, alpha);
   }
 `;
 
@@ -158,7 +155,7 @@ export function createCatalogueCloud(scene, opts = {}) {
     colorBuf[i * 3]     = defaultColor.r;
     colorBuf[i * 3 + 1] = defaultColor.g;
     colorBuf[i * 3 + 2] = defaultColor.b;
-    sizeBuf[i]          = 2.5;
+    sizeBuf[i]          = 0.9;   // tighter default size
   }
 
   // ── BufferGeometry ─────────────────────────────────────────────────────────
@@ -176,8 +173,10 @@ export function createCatalogueCloud(scene, opts = {}) {
     fragmentShader: SAT_FRAG,
     vertexColors:   true,           // reads the 'color' attribute
     transparent:    true,
-    depthWrite:     false,          // ★ eliminates z-sort cost for transparent geo
-    blending:       THREE.AdditiveBlending,
+    depthWrite:     false,
+    // NormalBlending (NOT AdditiveBlending) — additive causes thousands of
+    // overlapping transparent dots to SUM to pure white, hiding the Earth.
+    blending:       THREE.NormalBlending,
   });
 
   // ── Points mesh ──────────────────────────────────────────────────────────
@@ -220,6 +219,7 @@ export function updateCataloguePositions(cloud, positionMap, opts = {}) {
   const {
     globeRadius = 1,
     colorFn     = null,   // optional per-satellite color callback
+    selectedNoradId = null,
   } = opts;
 
   const { positionBuf, colorBuf, sizeBuf, geometry, maxObjects, indexMap } = cloud;
@@ -245,11 +245,25 @@ export function updateCataloguePositions(cloud, positionMap, opts = {}) {
       colorBuf[base + 2] = c.b;
     }
 
-    // Per-satellite dot size: debris = small, payload/rocket body = larger
+    // Per-satellite dot size: debris tiny, rocket body medium, payloads small
     const type = (pos.objectType ?? '').toUpperCase();
-    sizeBuf[idx] = type.includes('DEBRIS') ? 1.8
-                 : type.includes('ROCKET') ? 2.2
-                 : 3.0;   // payloads / unknown
+    const isSelected = selectedNoradId != null && noradId === selectedNoradId;
+    const isAnySelected = selectedNoradId != null;
+
+    if (isAnySelected) {
+      if (isSelected) {
+        sizeBuf[idx] = 6.0; // selected satellite highlight
+      } else {
+        // Dim all other satellites down
+        sizeBuf[idx] = type.includes('DEBRIS') ? 0.4
+                     : type.includes('ROCKET') ? 0.6
+                     : 0.8;
+      }
+    } else {
+      sizeBuf[idx] = type.includes('DEBRIS') ? 0.4
+                   : type.includes('ROCKET') ? 0.6
+                   : 0.8;
+    }
 
     indexMap.set(noradId, idx);
     idx++;

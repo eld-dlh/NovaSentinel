@@ -39,14 +39,19 @@ const _materialCache = new Map();
 function getEllipsoidMaterial(poc) {
   const tier = pocToTier(poc);
   if (!_materialCache.has(tier)) {
+    const col = pocToColor(poc);
+    // Very low opacity so the Earth globe remains visible through the ellipsoids.
+    // Use DoubleSide + depthWrite:false to avoid Z-fighting artefacts.
+    const baseOpacity = { GREEN: 0.04, AMBER: 0.07, RED: 0.12, UNKNOWN: 0.03 }[tier] ?? 0.04;
     _materialCache.set(tier, new THREE.MeshPhongMaterial({
-      color:       pocToColor(poc),
-      emissive:    pocToColor(poc),
-      emissiveIntensity: 0.3,
-      transparent: true,
-      opacity:     pocToOpacity(poc),
-      side:        THREE.FrontSide,
-      depthWrite:  false,           // prevent z-fighting with satellite dots
+      color:             col,
+      emissive:          col,
+      emissiveIntensity: 0.6,     // glow-like look without brightness overdose
+      transparent:       true,
+      opacity:           baseOpacity,
+      side:              THREE.DoubleSide,
+      depthWrite:        false,   // prevent z-fighting with satellite dots
+      wireframe:         false,
     }));
   }
   return _materialCache.get(tier);

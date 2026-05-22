@@ -160,6 +160,19 @@ export function initTooltip(canvas, camera, positionMap) {
   });
 
   canvas.addEventListener('mouseleave', _hide);
+
+  // Click-to-select interaction
+  canvas.addEventListener('click', () => {
+    const noradId = _pick(camera, canvas);
+    if (noradId) {
+      const rec = _tleRecords?.get(noradId);
+      if (rec) {
+        document.dispatchEvent(new CustomEvent('novasentinel:satellite-clicked', {
+          detail: { record: rec }
+        }));
+      }
+    }
+  });
 }
 
 function _show(noradId, pos, poc) {

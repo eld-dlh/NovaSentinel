@@ -56,6 +56,7 @@ def dashboard(request):
         'rejected_count':      RejectedTLE.objects.count(),
         'conjunction_count':   ConjunctionAlert.objects.count(),
         'title':               'NovaSentinel — Space Situational Awareness',
+        'debug':               settings.DEBUG,
     }
     return render(request, 'dashboard.html', context)
 
@@ -151,11 +152,19 @@ def proxy_tle(request):
     url    = f'https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT={fmt}'
 
     try:
-        resp = req_lib.get(url, timeout=30, headers={'Accept': 'text/plain'})
+        resp = req_lib.get(
+            url, 
+            timeout=30, 
+            headers={
+                'Accept': 'text/plain',
+                'User-Agent': 'NovaSentinel/1.0'
+            }
+        )
         resp.raise_for_status()
         if fmt == 'json':
             return JsonResponse(resp.json(), safe=False)
-        return JsonResponse({'raw': resp.text, 'group': group})
+        from django.http import HttpResponse
+        return HttpResponse(resp.text, content_type='text/plain')
     except Exception as exc:
         logger.error('[proxy_tle] %s', exc)
         return JsonResponse({'error': str(exc)}, status=502)
@@ -172,7 +181,7 @@ def proxy_omm(request):
     url   = f'https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=json'
 
     try:
-        resp = req_lib.get(url, timeout=30)
+        resp = req_lib.get(url, timeout=30, headers={'User-Agent': 'NovaSentinel/1.0'})
         resp.raise_for_status()
         return JsonResponse(resp.json(), safe=False)
     except Exception as exc:

@@ -110,7 +110,13 @@ function loadFromStorage() {
  * @returns {Promise<TLERecord[]>}
  */
 export async function fetchTLEs(group = 'active', opts = {}) {
-  const url = GROUP_URLS[group] ?? group; // allow raw URL override
+  const _cfg = (typeof window !== 'undefined' && window.NOVA_CONFIG) || {};
+  let url = GROUP_URLS[group] ?? group; // allow raw URL override
+
+  if (_cfg.tleEndpoint) {
+    // Route through Django proxy
+    url = `${_cfg.tleEndpoint}?group=${encodeURIComponent(group)}&format=tle`;
+  }
 
   let text;
   try {

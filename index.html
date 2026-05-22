@@ -76,6 +76,39 @@
     <!-- Centre: Three.js WebGL canvas -->
     <section id="globe-section" aria-label="3D Earth globe">
       <canvas id="globe-canvas" aria-label="Interactive 3D globe showing tracked space objects"></canvas>
+
+      <!-- ── Satellite Search Bar ─────────────────────────────────────────── -->
+      <div id="search-wrapper" role="search" aria-label="Satellite search">
+        <div id="search-bar">
+          <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               width="15" height="15" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            id="search-input"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search by name or NORAD ID…"
+            aria-label="Search satellite by name or NORAD ID"
+            aria-autocomplete="list"
+            aria-controls="search-dropdown"
+            aria-haspopup="listbox"
+          />
+          <button id="search-clear-btn" class="search-clear" aria-label="Clear search" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Dropdown suggestions -->
+        <div id="search-dropdown" class="hidden" role="listbox" aria-label="Search suggestions"></div>
+
+        <!-- Result card -->
+        <div id="search-result-card" class="hidden" role="region" aria-label="Satellite details"></div>
+      </div>
+
       <!-- Loading overlay -->
       <div id="loading-overlay">
         <div class="loader-ring"></div>

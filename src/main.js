@@ -43,12 +43,14 @@ import { createUncertaintyEllipsoid, orientEllipsoidRTN,
          clearEllipsoids }                            from './viz/ellipsoid.js';
 import { pocToColor }                                 from './viz/riskColors.js';
 import { flyToConjunction, resetCamera }              from './viz/cameraControls.js';
+import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
 import * as THREE                                     from 'three';
 
 // ── UI ────────────────────────────────────────────────────────────────────
 import { initAlertPanel, updateAlertPanel }           from './ui/alertPanel.js';
 import { initDecayPanel, updateDecayPanel }           from './ui/decayPanel.js';
 import { initTooltip, registerTooltipData }           from './ui/objectTooltip.js';
+import { initSearch, updateSearchData }               from './ui/searchPanel.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Bootstrap Three.js scene
@@ -73,6 +75,10 @@ const ellipsoidGroup = new THREE.Group();
 ellipsoidGroup.name  = 'ellipsoids';
 scene.add(ellipsoidGroup);
 
+// Orbit path for the selected satellite
+const orbitLine = createOrbitLine();
+scene.add(orbitLine);
+
 // ── State ────────────────────────────────────────────────────────────────
 let _pocMap      = new Map();  // noradId → PoC score
 let _tleMap      = new Map();  // noradId → TLERecord
@@ -81,20 +87,78 @@ let _cdmRecords  = [];
 let _ellipsoids  = [];         // THREE.Mesh[] parallel to _cdmRecords
 let _showEllipsoids = true;
 let _pocModel    = null;
+let _selectedNoradId = null;
+
+// ── Colour palette per object type ──────────────────────────────────────────
+const COLOR_PAYLOAD  = new THREE.Color(0x4fc3f7);   // cyan-blue  — active satellites
+const COLOR_DEBRIS   = new THREE.Color(0xff6b35);   // orange-red — debris (most common)
+const COLOR_ROCKET   = new THREE.Color(0xb39ddb);   // soft purple — rocket bodies
+const COLOR_UNKNOWN  = new THREE.Color(0x78909c);   // blue-grey  — unclassified
 
 // ── Colour function for updateCataloguePositions ─────────────────────────
 function satelliteColor(pos, noradId) {
+  if (_selectedNoradId != null) {
+    if (noradId !== _selectedNoradId) {
+      // Dimmed color: let's get the base color and scale it down
+      let base;
+      const poc = _pocMap.get(noradId) ?? null;
+      if (poc != null) {
+        base = pocToColor(poc);
+      } else {
+        const type = (pos.objectType ?? '').toUpperCase();
+        if (type.includes('DEBRIS'))  base = COLOR_DEBRIS;
+        else if (type.includes('ROCKET'))  base = COLOR_ROCKET;
+        else if (type.includes('PAYLOAD')) base = COLOR_PAYLOAD;
+        else {
+          const alt = pos.altKm ?? 400;
+          const t   = Math.max(0, Math.min(1, (alt - 200) / 1800));
+          base = new THREE.Color().setHSL(0.56 + t * 0.08, 0.85, 0.50 + t * 0.08);
+        }
+      }
+      return base.clone().multiplyScalar(0.12);
+    } else {
+      // Selected satellite: return yellow highlight color
+      return new THREE.Color(0xffea00);
+    }
+  }
+
+  // 1. PoC-flagged objects override type colour with risk colour
   const poc = _pocMap.get(noradId) ?? null;
   if (poc != null) return pocToColor(poc);
-  // Default: altitude-tinted (lower = warmer)
-  const alt   = pos.altKm ?? 400;
-  const t     = Math.max(0, Math.min(1, (alt - 200) / 1800)); // 200-2000 km range
-  return new THREE.Color().setHSL(0.55 + t * 0.15, 0.9, 0.55 + t * 0.1);
+
+  // 2. Colour by object type for quick visual differentiation
+  const type = (pos.objectType ?? '').toUpperCase();
+  if (type.includes('DEBRIS'))  return COLOR_DEBRIS;
+  if (type.includes('ROCKET'))  return COLOR_ROCKET;
+  if (type.includes('PAYLOAD')) return COLOR_PAYLOAD;
+
+  // 3. Altitude-tinted fallback for unknown types (lower = warmer)
+  const alt = pos.altKm ?? 400;
+  const t   = Math.max(0, Math.min(1, (alt - 200) / 1800));
+  return new THREE.Color().setHSL(0.56 + t * 0.08, 0.85, 0.50 + t * 0.08);
 }
 
 // ── Render loop ───────────────────────────────────────────────────────────
 const stopLoop = startRenderLoop(ctx, (dt) => {
   earth.tick(dt);  // slow Earth rotation
+
+  // Real-time selected satellite visual pulse!
+  if (_selectedNoradId != null) {
+    const idx = cloud.indexMap.get(_selectedNoradId);
+    if (idx != null) {
+      const base = idx * 3;
+      const pulse = 0.85 + 0.15 * Math.sin(performance.now() * 0.009);
+      const color = new THREE.Color(0xffea00).multiplyScalar(pulse);
+      cloud.colorBuf[base]     = color.r;
+      cloud.colorBuf[base + 1] = color.g;
+      cloud.colorBuf[base + 2] = color.b;
+      cloud.geometry.attributes.color.needsUpdate = true;
+
+      const sizePulse = 9.0 + 3.0 * Math.sin(performance.now() * 0.009);
+      cloud.sizeBuf[idx] = sizePulse;
+      cloud.geometry.attributes.size.needsUpdate = true;
+    }
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,7 +179,11 @@ propagator.start((positionMap) => {
 
   updateCataloguePositions(cloud, positionMap, {
     colorFn: satelliteColor,
+    selectedNoradId: _selectedNoradId,
   });
+
+  // Keep search panel position data live
+  updateSearchData(_tleMap, _pocMap, _posMap);
 
   // Update header stat
   const statEl = document.getElementById('stat-objects');
@@ -135,6 +203,9 @@ onTLEUpdate((records, fetchedAt) => {
 
   // Register with tooltip picker
   registerTooltipData(cloud, _tleMap, _pocMap);
+
+  // Update search panel with fresh TLE catalogue
+  updateSearchData(_tleMap, _pocMap, _posMap);
 
   // Load into propagator
   propagator.load(records);
@@ -317,6 +388,9 @@ onCDMUpdate(async (records, fetchedAt) => {
     }
   }
 
+  // Sync updated PoC scores to search panel (after all CDMs processed)
+  updateSearchData(_tleMap, _pocMap, _posMap);
+
   // Patch CDM records with ML PoC where CDM field is missing
   const enriched = records.map(r => ({
     ...r,
@@ -363,6 +437,9 @@ initDecayPanel();
 // Tooltip
 initTooltip(canvas, camera, _posMap);
 
+// Search panel
+initSearch();
+
 // Reset camera button
 document.getElementById('reset-camera-btn')?.addEventListener('click', () => {
   resetCamera(camera, controls);
@@ -372,6 +449,55 @@ document.getElementById('reset-camera-btn')?.addEventListener('click', () => {
 document.addEventListener('novasentinel:ellipsoid-toggle', (e) => {
   _showEllipsoids = e.detail.visible;
   _ellipsoids.forEach(m => { m.visible = e.detail.visible; });
+});
+
+// Search fly-to event — camera zooms to the selected satellite
+document.addEventListener('novasentinel:search-fly', (e) => {
+  const noradId = String(e.detail?.noradId ?? '');
+  _selectedNoradId = noradId;
+
+  // Immediately update colors and sizes in the point cloud
+  updateCataloguePositions(cloud, _posMap, {
+    colorFn: satelliteColor,
+    selectedNoradId: _selectedNoradId,
+  });
+
+  // Calculate and display the orbital trajectory line
+  const record = _tleMap.get(noradId);
+  if (record && record.satrec) {
+    updateOrbitLineGeometry(orbitLine, record.satrec, new Date());
+    
+    // Set orbit line color to match the selected satellite's status color
+    const pos = _posMap.get(noradId);
+    if (pos) {
+      orbitLine.material.color.copy(satelliteColor(pos, noradId));
+    }
+  } else {
+    orbitLine.visible = false;
+  }
+
+  const pos = _posMap.get(noradId);
+  if (!pos) return;
+  const target = new THREE.Vector3(
+    pos.eciPos.x / 6371,
+    pos.eciPos.y / 6371,
+    pos.eciPos.z / 6371,
+  );
+  // Fly camera 1.4× Earth-radius above the satellite
+  const camTarget = target.clone().normalize().multiplyScalar(1.55);
+  flyToConjunction(camera, controls, target, camTarget);
+});
+
+// Search clear event — restores all satellites to original visibility and hides orbit path
+document.addEventListener('novasentinel:search-clear', () => {
+  _selectedNoradId = null;
+  orbitLine.visible = false;
+  
+  // Immediately update colors and sizes back to normal
+  updateCataloguePositions(cloud, _posMap, {
+    colorFn: satelliteColor,
+    selectedNoradId: null,
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
