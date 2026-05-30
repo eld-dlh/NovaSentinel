@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/assets/index-BspQxDj-.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-B_R4NDS_.css">
+  <script type="module" crossorigin src="/assets/index-BylcUAup.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BralT1Jm.css">
 </head>
 <body>
 
@@ -53,32 +53,14 @@
     </div>
   </header>
 
-  <!-- ═══ Main layout: [decay panel] [globe] [alert panel] ════════════════ -->
+  <!-- ═══ Main layout: full-width globe ══════════════════════════════════ -->
   <main id="main-layout" role="main">
-
-    <!-- Left panel: Brain.js decay predictions -->
-    <aside id="decay-panel" aria-label="Orbital decay predictions">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Decay Forecast
-        </h2>
-        <span class="panel-badge" id="decay-count">0 alerts</span>
-      </div>
-      <div class="panel-subtext">Brain.js LSTM · 3-step horizon</div>
-      <div id="decay-list" class="scroll-list">
-        <div class="decay-empty">
-          <div class="decay-empty-icon">🛸</div>
-          <div>Training model…</div>
-        </div>
-      </div>
-    </aside>
 
     <!-- Centre: Three.js WebGL canvas -->
     <section id="globe-section" aria-label="3D Earth globe">
       <canvas id="globe-canvas" aria-label="Interactive 3D globe showing tracked space objects"></canvas>
 
-      <!-- ── Satellite Search Bar ─────────────────────────────────────────── -->
+      <!-- ── Satellite Search Bar (left side) ───────────────────────────── -->
       <div id="search-wrapper" role="search" aria-label="Satellite search">
         <div id="search-bar">
           <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -105,9 +87,6 @@
 
         <!-- Dropdown suggestions -->
         <div id="search-dropdown" class="hidden" role="listbox" aria-label="Search suggestions"></div>
-
-        <!-- Result card -->
-        <div id="search-result-card" class="hidden" role="region" aria-label="Satellite details"></div>
       </div>
 
       <!-- Loading overlay -->
@@ -117,69 +96,113 @@
         <div class="loader-sub" id="loader-sub">Loading Three.js scene</div>
       </div>
     </section>
-
-    <!-- Right panel: Conjunction alerts -->
-    <aside id="alert-panel" aria-label="Conjunction alerts">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Conjunctions
-        </h2>
-        <span class="panel-badge" id="alert-count">0 events</span>
-      </div>
-
-      <!-- Controls -->
-      <div id="panel-controls">
-        <!-- Threshold -->
-        <div class="control-group">
-          <label class="control-label" for="threshold-slider">
-            Risk threshold
-            <span id="threshold-label" class="control-value">PoC ≥ 10⁻⁴</span>
-          </label>
-          <input type="range" id="threshold-slider" min="0" max="3" step="1" value="2"
-                 aria-label="Probability of collision threshold" />
-          <div class="slider-ticks">
-            <span>10⁻⁶</span><span>10⁻⁵</span><span>10⁻⁴</span><span>10⁻³</span>
-          </div>
-        </div>
-
-        <!-- Filters -->
-        <div class="control-group filter-row">
-          <label class="check-label">
-            <input type="checkbox" id="filter-debris" checked />
-            <span>Debris</span>
-          </label>
-          <label class="check-label">
-            <input type="checkbox" id="filter-payload" checked />
-            <span>Payload</span>
-          </label>
-        </div>
-
-        <!-- Ellipsoid toggle -->
-        <div class="control-group toggle-row">
-          <span class="control-label">CDM Ellipsoids</span>
-          <label class="toggle-switch" aria-label="Toggle CDM uncertainty ellipsoids">
-            <input type="checkbox" id="ellipsoid-toggle" checked />
-            <span class="toggle-track"></span>
-          </label>
-        </div>
-      </div>
-
-      <div id="alert-list" class="scroll-list">
-        <div class="alert-empty">
-          <div class="alert-empty-icon">✓</div>
-          <div>No CDM data yet</div>
-        </div>
-      </div>
-
-      <div id="panel-footer">
-        <button id="export-csv-btn" class="btn-secondary" aria-label="Export alert list as CSV">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Export CSV
-        </button>
-      </div>
-    </aside>
   </main>
+
+  <!-- ── Draggable Satellite Result Card (floats freely over the scene) ── -->
+  <div id="search-result-card" class="hidden" role="region" aria-label="Satellite details">
+    <div id="src-card-drag-handle" aria-label="Drag to move">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+      <span>Satellite Details</span>
+      <button id="src-card-close-btn" aria-label="Close satellite details" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Hidden side-panel content blocks (rendered into popup) ────────── -->
+  <!-- Left panel: Brain.js decay predictions -->
+  <aside id="decay-panel" aria-label="Orbital decay predictions" style="display:none">
+    <div class="panel-header">
+      <h2 class="panel-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Decay Forecast
+      </h2>
+      <span class="panel-badge" id="decay-count">0 alerts</span>
+    </div>
+    <div class="panel-subtext">Brain.js LSTM · 3-step horizon</div>
+    <div id="decay-list" class="scroll-list">
+      <div class="decay-empty">
+        <div class="decay-empty-icon">🛸</div>
+        <div>Training model…</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right panel: Conjunction alerts -->
+  <aside id="alert-panel" aria-label="Conjunction alerts" style="display:none">
+    <div class="panel-header">
+      <h2 class="panel-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Conjunctions
+      </h2>
+      <span class="panel-badge" id="alert-count">0 events</span>
+    </div>
+
+    <!-- Controls -->
+    <div id="panel-controls">
+      <!-- Threshold -->
+      <div class="control-group">
+        <label class="control-label" for="threshold-slider">
+          Risk threshold
+          <span id="threshold-label" class="control-value">PoC ≥ 10⁻⁴</span>
+        </label>
+        <input type="range" id="threshold-slider" min="0" max="3" step="1" value="2"
+               aria-label="Probability of collision threshold" />
+        <div class="slider-ticks">
+          <span>10⁻⁶</span><span>10⁻⁵</span><span>10⁻⁴</span><span>10⁻³</span>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="control-group filter-row">
+        <label class="check-label">
+          <input type="checkbox" id="filter-debris" checked />
+          <span>Debris</span>
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="filter-payload" checked />
+          <span>Payload</span>
+        </label>
+      </div>
+
+      <!-- Ellipsoid toggle -->
+      <div class="control-group toggle-row">
+        <span class="control-label">CDM Ellipsoids</span>
+        <label class="toggle-switch" aria-label="Toggle CDM uncertainty ellipsoids">
+          <input type="checkbox" id="ellipsoid-toggle" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <div id="alert-list" class="scroll-list">
+      <div class="alert-empty">
+        <div class="alert-empty-icon">✓</div>
+        <div>No CDM data yet</div>
+      </div>
+    </div>
+
+    <div id="panel-footer">
+      <button id="export-csv-btn" class="btn-secondary" aria-label="Export alert list as CSV">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Notification popup ─────────────────────────────────────────────── -->
+  <div id="notif-popup" class="hidden" role="dialog" aria-label="Space alerts and forecasts">
+    <div id="notif-popup-inner"></div>
+  </div>
+
+  <!-- ── Notification bell button (bottom-right) ───────────────────────── -->
+  <button id="notif-btn" class="notif-bell-btn" aria-label="Toggle alerts popup" title="Space Alerts">
+    <svg id="notif-bell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+    <span id="notif-badge" class="notif-badge hidden">0</span>
+  </button>
 
   <!-- Hover tooltip -->
   <div id="object-tooltip" role="tooltip" aria-live="polite"></div>

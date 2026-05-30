@@ -56,6 +56,22 @@ export function initSearch() {
   document.addEventListener('click',   _onDocClick);
   _clearBtnEl?.addEventListener('click', _clearAll);
 
+  // Make the result card draggable
+  _initDraggable(_resultCardEl);
+
+  // Live track updates — update altitude/speed on every propagation cycle
+  document.addEventListener('novasentinel:track-update', (e) => {
+    const { altKm, speed, lat, lon } = e.detail ?? {};
+    const altEl  = document.getElementById('src-live-alt');
+    const spdEl  = document.getElementById('src-live-spd');
+    const latEl  = document.getElementById('src-live-lat');
+    const lonEl  = document.getElementById('src-live-lon');
+    if (altEl  && altKm  != null) altEl.textContent  = altKm.toFixed(1);
+    if (spdEl  && speed  != null) spdEl.textContent  = speed.toFixed(3);
+    if (latEl  && lat    != null) latEl.textContent  = lat.toFixed(2) + '°';
+    if (lonEl  && lon    != null) lonEl.textContent  = lon.toFixed(2) + '°';
+  });
+
   // Listen to 3D canvas selection clicks
   document.addEventListener('novasentinel:satellite-clicked', (e) => {
     const rec = e.detail?.record;
@@ -216,8 +232,10 @@ function _showResultCard(rec) {
 
   const alt  = pos?.altKm?.toFixed(1)   ?? '—';
   const spd  = pos?.speed?.toFixed(3)   ?? '—';
-  const inc  = rec.inc != null           ? `${rec.inc.toFixed(2)}°`  : '—';
-  const ecc  = rec.ecc != null           ? rec.ecc.toFixed(5)        : '—';
+  const inc  = rec.inclination != null   ? `${rec.inclination.toFixed(2)}°`  : '—';
+  const ecc  = rec.eccentricity != null  ? rec.eccentricity.toFixed(5)        : '—';
+  const lat  = pos?.lat != null          ? `${pos.lat.toFixed(2)}°`          : '—';
+  const lon  = pos?.lon != null          ? `${pos.lon.toFixed(2)}°`          : '—';
   const period = rec.meanMotion
     ? `${(1440 / rec.meanMotion).toFixed(1)} min` : '—';
 
@@ -226,7 +244,7 @@ function _showResultCard(rec) {
     ? `background:${color}22; border-color:${color}; color:${color};`
     : `background:transparent; border-color:var(--text-dim); color:var(--text-dim);`;
 
-  _resultCardEl.innerHTML = `
+  const contentHtml = `
     <div class="src-card-header">
       <div class="src-card-tier" style="background:${color}; box-shadow: 0 0 8px ${color}"></div>
       <div class="src-card-title-group">
@@ -256,11 +274,11 @@ function _showResultCard(rec) {
     <div class="src-card-stats">
       <div class="src-stat">
         <span class="src-stat-label">Altitude</span>
-        <span class="src-stat-val">${alt} <span class="src-stat-unit">km</span></span>
+        <span class="src-stat-val"><span id="src-live-alt">${alt}</span> <span class="src-stat-unit">km</span></span>
       </div>
       <div class="src-stat">
         <span class="src-stat-label">Speed</span>
-        <span class="src-stat-val">${spd} <span class="src-stat-unit">km/s</span></span>
+        <span class="src-stat-val"><span id="src-live-spd">${spd}</span> <span class="src-stat-unit">km/s</span></span>
       </div>
       <div class="src-stat">
         <span class="src-stat-label">Inclination</span>
@@ -274,16 +292,66 @@ function _showResultCard(rec) {
         <span class="src-stat-label">Period</span>
         <span class="src-stat-val">${period}</span>
       </div>
+      <div class="src-stat">
+        <span class="src-stat-label">Latitude</span>
+        <span class="src-stat-val"><span id="src-live-lat">${lat}</span></span>
+      </div>
+      <div class="src-stat">
+        <span class="src-stat-label">Longitude</span>
+        <span class="src-stat-val"><span id="src-live-lon">${lon}</span></span>
+      </div>
+    </div>
+
+    <div class="src-card-actions">
+      <button type="button" id="src-follow-btn" class="src-follow-btn" title="Toggle camera follow" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+          <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+        </svg>
+        Follow Camera
+      </button>
     </div>
   `;
 
+  // Inject into the content area (after the drag handle), preserving the handle
+  let contentDiv = _resultCardEl.querySelector('#src-card-content');
+  if (!contentDiv) {
+    contentDiv = document.createElement('div');
+    contentDiv.id = 'src-card-content';
+    _resultCardEl.appendChild(contentDiv);
+  }
+  contentDiv.innerHTML = contentHtml;
+
   _resultCardEl.classList.remove('hidden');
 
-  // Wire fly button
+  // Wire drag-handle close button
+  const closeBtn = _resultCardEl.querySelector('#src-card-close-btn');
+  closeBtn?.addEventListener('click', () => {
+    _clearAll();
+  });
+
+  // Wire fly/track button
   document.getElementById('search-fly-btn')?.addEventListener('click', () => {
     document.dispatchEvent(new CustomEvent('novasentinel:search-fly', {
       detail: { noradId }
     }));
+  });
+
+  // Wire follow button
+  const followBtn = document.getElementById('src-follow-btn');
+  followBtn?.addEventListener('click', () => {
+    const isFollowing = followBtn.getAttribute('aria-pressed') === 'true';
+    const nowFollowing = !isFollowing;
+    followBtn.setAttribute('aria-pressed', String(nowFollowing));
+    followBtn.classList.toggle('active', nowFollowing);
+    document.dispatchEvent(new CustomEvent('novasentinel:follow-toggle', {
+      detail: { follow: nowFollowing }
+    }));
+    // Also re-fly to current satellite position when enabling follow
+    if (nowFollowing) {
+      document.dispatchEvent(new CustomEvent('novasentinel:search-fly', {
+        detail: { noradId }
+      }));
+    }
   });
 }
 
@@ -323,6 +391,7 @@ function _onDocClick(e) {
   }
 }
 
+
 function _clearAll() {
   _inputEl.value = '';
   _clearBtnEl && (_clearBtnEl.style.display = 'none');
@@ -330,4 +399,46 @@ function _clearAll() {
   _resultCardEl?.classList.add('hidden');
   document.dispatchEvent(new CustomEvent('novasentinel:search-clear'));
   _inputEl.focus();
+}
+
+// ── Draggable card ────────────────────────────────────────────────────────────
+
+function _initDraggable(el) {
+  if (!el) return;
+  const handle = document.getElementById('src-card-drag-handle');
+  if (!handle) return;
+
+  let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    startX  = e.clientX;
+    startY  = e.clientY;
+    origLeft = rect.left;
+    origTop  = rect.top;
+
+    // Switch from default CSS position to explicit pixel position
+    el.style.left = origLeft + 'px';
+    el.style.top  = origTop  + 'px';
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const newLeft = Math.max(0, Math.min(window.innerWidth  - el.offsetWidth,  origLeft + dx));
+      const newTop  = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, origTop  + dy));
+      el.style.left = newLeft + 'px';
+      el.style.top  = newTop  + 'px';
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  });
 }

@@ -98,12 +98,12 @@ html, body {
   50%      { opacity: 0.4; }
 }
 
-/* ── Main layout ───────────────────────────────────────────────────────── */
+/* ── Main layout ─────────────────────────────────────────────────── */
 #main-layout {
   position: fixed;
   top: var(--header-h); left: 0; right: 0; bottom: 0;
   display: grid;
-  grid-template-columns: var(--panel-w) 1fr var(--panel-w);
+  grid-template-columns: 1fr;
   grid-template-rows: 1fr;
   overflow: hidden;
 }
@@ -377,13 +377,12 @@ input[type=range]::-webkit-slider-thumb {
    Search Bar & Result Card
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Wrapper: anchored top-centre of globe section ──────────────────────── */
+/* ── Wrapper: anchored top-left of globe section ─────────────────────── */
 #search-wrapper {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: clamp(280px, 38vw, 500px);
+  left: 16px;
+  width: clamp(240px, 26vw, 340px);
   z-index: 80;
   display: flex;
   flex-direction: column;
@@ -491,15 +490,41 @@ input[type=range]::-webkit-slider-thumb {
 
 /* ── Result card ────────────────────────────────────────────────────────── */
 #search-result-card {
+  position: fixed;
+  top: 80px;
+  left: 370px;
   background: rgba(6, 12, 24, 0.97);
   border: 1px solid var(--border-glow);
   border-radius: 14px;
   backdrop-filter: blur(24px);
   box-shadow: 0 8px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(79,195,247,0.06);
-  padding: 14px;
+  padding: 0 14px 14px;
   animation: drop-in 0.18s ease;
+  min-width: 280px;
+  max-width: 360px;
+  cursor: default;
+  user-select: none;
+  z-index: 90;
 }
 #search-result-card.hidden { display: none; }
+
+/* Drag handle */
+#src-card-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  user-select: none;
+}
+#src-card-drag-handle:active { cursor: grabbing; }
+#src-card-drag-handle svg { flex-shrink: 0; }
 
 /* Card header */
 .src-card-header {
@@ -586,3 +611,129 @@ input[type=range]::-webkit-slider-thumb {
   font-size: 11px; font-weight: 500; color: var(--text-primary);
 }
 .src-stat-unit { font-size: 9px; color: var(--text-muted); }
+
+/* Card actions (Follow camera) */
+.src-card-actions {
+  margin-top: 14px;
+  display: flex; justify-content: flex-end;
+}
+.src-follow-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-muted);
+  font-size: 11px; font-family: var(--font-ui); font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+}
+.src-follow-btn:hover {
+  background: var(--bg-row); color: var(--text-primary);
+  border-color: var(--text-dim);
+}
+.src-follow-btn[aria-pressed="true"] {
+  background: rgba(0, 230, 118, 0.12); border-color: var(--green);
+  color: var(--green);
+}
+.src-follow-btn[aria-pressed="true"]:hover {
+  background: rgba(0, 230, 118, 0.2);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Notification Bell Button & Popup
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Bell FAB (bottom-right) ────────────────────────────────────────────── */
+.notif-bell-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 200;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: rgba(6, 12, 24, 0.92);
+  border: 1px solid var(--border-glow);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 18px rgba(79,195,247,0.15);
+  backdrop-filter: blur(12px);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+.notif-bell-btn:hover {
+  background: rgba(79,195,247,0.12);
+  box-shadow: 0 4px 30px rgba(0,0,0,0.6), 0 0 24px rgba(79,195,247,0.3);
+  transform: scale(1.07);
+}
+.notif-bell-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79,195,247,0.15), 0 4px 24px rgba(0,0,0,0.5);
+}
+
+/* Notification count badge */
+.notif-badge {
+  position: absolute;
+  top: 6px; right: 6px;
+  min-width: 16px; height: 16px;
+  border-radius: 8px;
+  background: var(--red);
+  color: #fff;
+  font-size: 9px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px;
+  border: 1.5px solid var(--bg-deep);
+  box-shadow: 0 0 8px rgba(255,23,68,0.5);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.notif-badge.hidden { display: none; }
+
+/* ── Popup panel (slides up from bottom-right) ──────────────────────────── */
+#notif-popup {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  z-index: 190;
+  width: 680px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 120px);
+  display: flex;
+  gap: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-glow);
+  box-shadow: 0 16px 64px rgba(0,0,0,0.8), 0 0 0 1px rgba(79,195,247,0.08);
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+  animation: popup-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#notif-popup.hidden {
+  display: none;
+}
+@keyframes popup-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+#notif-popup-inner {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+  max-height: calc(100vh - 120px);
+}
+
+/* The two aside panels rendered inside the popup */
+#notif-popup-inner aside {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+#notif-popup-inner #decay-panel  { border-right: 1px solid var(--border); }
+#notif-popup-inner #alert-panel  { border-left: none; }
+
+/* Keep hidden asides out of normal flow */
+aside[style*="display:none"] { display: none !important; }
+
+/* ── Object Legend (always visible bottom-left) ─────────────────────────── */

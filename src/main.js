@@ -15,7 +15,7 @@
 import './style.css';
 
 // ── Data layer ────────────────────────────────────────────────────────────
-import { startTLEPolling, onTLEUpdate }                from './data/tleFetch.js';
+import { startTLEPolling, onTLEUpdate, fetchAllDebris, getCachedDebris } from './data/tleFetch.js';
 import { loginSpaceTrack, startNormalPolling,
          onCDMUpdate,
          postRejectionToDjango,
@@ -37,12 +37,11 @@ import { buildDecaySequences, trainDecayModel,
 // ── Three.js visualisation ────────────────────────────────────────────────
 import { initScene, startRenderLoop }                 from './viz/scene.js';
 import { createEarth }                                from './viz/earth.js';
-import { createCatalogueCloud,
-         updateCataloguePositions }                   from './viz/catalogue.js';
+import { createCatalogueCloud, updateCataloguePositions, geoToWorld } from './viz/catalogue.js';
 import { createUncertaintyEllipsoid, orientEllipsoidRTN,
          clearEllipsoids }                            from './viz/ellipsoid.js';
 import { pocToColor }                                 from './viz/riskColors.js';
-import { flyToConjunction, resetCamera }              from './viz/cameraControls.js';
+import { flyToConjunction, flyToPoint, resetCamera } from './viz/cameraControls.js';
 import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
 import * as THREE                                     from 'three';
 
@@ -88,6 +87,7 @@ let _ellipsoids  = [];         // THREE.Mesh[] parallel to _cdmRecords
 let _showEllipsoids = true;
 let _pocModel    = null;
 let _selectedNoradId = null;
+let _followCamera    = false;  // camera-follow mode
 
 // ── Colour palette per object type ──────────────────────────────────────────
 const COLOR_PAYLOAD  = new THREE.Color(0x4fc3f7);   // cyan-blue  — active satellites
@@ -185,6 +185,36 @@ propagator.start((positionMap) => {
   // Keep search panel position data live
   updateSearchData(_tleMap, _pocMap, _posMap);
 
+  // Live-update the tracking card if a satellite is selected
+  if (_selectedNoradId) {
+    const pos = positionMap.get(_selectedNoradId);
+    if (pos) {
+      // Refresh the orbit path with current epoch
+      const record = _tleMap.get(_selectedNoradId);
+      if (record?.satrec) updateOrbitLineGeometry(orbitLine, record.satrec, new Date());
+
+      // Dispatch live data to update the result card fields
+      document.dispatchEvent(new CustomEvent('novasentinel:track-update', {
+        detail: {
+          noradId: _selectedNoradId,
+          altKm:   pos.altKm,
+          speed:   pos.speed,
+          lat:     pos.lat,
+          lon:     pos.lon,
+        }
+      }));
+
+      // Camera follow mode — smoothly nudge camera toward new satellite position
+      if (_followCamera && pos.lat != null) {
+        const satWorldObj = geoToWorld(pos.lat, pos.lon, pos.altKm, 1);
+        const satWorld = new THREE.Vector3(satWorldObj.x, satWorldObj.y, satWorldObj.z);
+        // Gently slide the orbit controls target toward the satellite
+        controls.target.lerp(satWorld, 0.08);
+        controls.update();
+      }
+    }
+  }
+
   // Update header stat
   const statEl = document.getElementById('stat-objects');
   if (statEl) statEl.textContent = positionMap.size.toLocaleString();
@@ -207,8 +237,20 @@ onTLEUpdate((records, fetchedAt) => {
   // Update search panel with fresh TLE catalogue
   updateSearchData(_tleMap, _pocMap, _posMap);
 
-  // Load into propagator
+  // Load into propagator (active satellites first)
   propagator.load(records);
+
+  // ── Instant debris hydration from localStorage ────────────────────────────
+  // getCachedDebris() is synchronous and zero-network. It immediately adds
+  // debris to the propagator so dots appear on the globe without waiting for
+  // the background fetch below. The background fetch (5 s delay) will refresh
+  // the cache silently for the next session.
+  const cachedDebris = getCachedDebris();
+  if (cachedDebris.length > 0) {
+    for (const r of cachedDebris) _tleMap.set(r.noradId, r);
+    propagator.update(cachedDebris);
+    console.info(`[main] ⚡ ${cachedDebris.length} debris objects loaded from cache (instant)`);
+  }
 
   // Hide loading overlay on first TLE load
   const overlay = document.getElementById('loading-overlay');
@@ -222,8 +264,8 @@ onTLEUpdate((records, fetchedAt) => {
   const tsEl = document.getElementById('stat-updated');
   if (tsEl && fetchedAt) tsEl.textContent = fetchedAt.toUTCString().slice(17, 25) + ' UTC';
 
-  // Defer Brain.js LSTM so render loop gets first frame
-  setTimeout(() => _runDecayPipeline(records), 0);
+  // Defer Brain.js LSTM — give Three.js several frames before blocking the thread
+  setTimeout(() => _runDecayPipeline(records), 500);
 });
 
 startTLEPolling({
@@ -240,6 +282,33 @@ startTLEPolling({
   },
 });
 
+// ── Debris fetch — deferred background refresh ────────────────────────────
+// The globe is already populated from localStorage cache (above).
+// We wait 5 s before starting network fetches so the active-TLE download and
+// initial SGP4 propagation finish first without bandwidth/CPU contention.
+// On first ever load (no cache), debris appears after ~5-10 s total.
+setTimeout(() => {
+  fetchAllDebris({ includeDecaying: false }).then((debrisRecords) => {
+    if (debrisRecords.length === 0) {
+      console.warn('[main] fetchAllDebris returned 0 records — check CelesTrak connectivity');
+      return;
+    }
+
+    // Merge into TLE map so tooltip + search panel can identify debris objects
+    for (const r of debrisRecords) _tleMap.set(r.noradId, r);
+
+    // Incrementally add to propagator without wiping active-satellite satrecs
+    propagator.update(debrisRecords);
+
+    // Update search data with the expanded catalogue
+    updateSearchData(_tleMap, _pocMap, _posMap);
+
+    console.info(`[main] ✓ ${debrisRecords.length} debris objects refreshed from network`);
+  }).catch((err) => {
+    console.error('[main] fetchAllDebris failed:', err.message);
+  });
+}, 5_000);  // 5-second delay — lets active TLE load + first propagation complete first
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Brain.js LSTM decay pipeline
 // ═══════════════════════════════════════════════════════════════════════════
@@ -250,13 +319,20 @@ async function _runDecayPipeline(records) {
   const loaderSub = document.getElementById('loader-sub');
   if (loaderSub) loaderSub.textContent = 'Training decay model…';
 
-  const sequences = buildDecaySequences(records, 10);
-  console.info(`[decay] ${sequences.length} sequences built`);
+  // Cap at 200 sequences — training time is O(n × iterations), and LSTM
+  // generalises well from a representative subset for altitude-decay detection.
+  const sequences = buildDecaySequences(records, 10).slice(0, 200);
+  console.info(`[decay] ${sequences.length} sequences built (capped at 200)`);
 
   if (sequences.length === 0) return;
 
+  // Yield one more frame so the globe is definitely rendered before the
+  // synchronous Brain.js training loop starts.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+
   const { net, trainLog } = trainDecayModel(sequences, {
-    iterations: 500, learningRate: 0.01,
+    iterations: 200,   // reduced from 500 — converges in <1 s for 200 sequences
+    learningRate: 0.01,
   });
   _decayNet = net;
 
@@ -440,10 +516,62 @@ initTooltip(canvas, camera, _posMap);
 // Search panel
 initSearch();
 
-// Reset camera button
+// Reset camera button (guards against clicks before scene loads)
 document.getElementById('reset-camera-btn')?.addEventListener('click', () => {
-  resetCamera(camera, controls);
+  if (camera && controls) {
+    resetCamera(camera, controls);
+  }
 });
+
+// ── Notification bell toggle ──────────────────────────────────────────────
+(function _initNotifBell() {
+  const btn       = document.getElementById('notif-btn');
+  const popup     = document.getElementById('notif-popup');
+  const inner     = document.getElementById('notif-popup-inner');
+  const decayEl   = document.getElementById('decay-panel');
+  const alertEl   = document.getElementById('alert-panel');
+  const badge     = document.getElementById('notif-badge');
+
+  if (!btn || !popup || !inner) return;
+
+  let open = false;
+
+  function _mount() {
+    if (decayEl) { decayEl.classList.remove('panel-hidden'); inner.appendChild(decayEl); }
+    if (alertEl) { alertEl.classList.remove('panel-hidden'); inner.appendChild(alertEl); }
+  }
+
+  function _unmount() {
+    if (decayEl) { document.body.appendChild(decayEl); decayEl.classList.add('panel-hidden'); }
+    if (alertEl) { document.body.appendChild(alertEl); alertEl.classList.add('panel-hidden'); }
+  }
+
+  btn.addEventListener('click', () => {
+    open = !open;
+    if (open) {
+      _mount();
+      popup.classList.remove('hidden');
+      btn.classList.add('active');
+    } else {
+      _unmount();
+      popup.classList.add('hidden');
+      btn.classList.remove('active');
+    }
+  });
+
+  // Update badge count from decay alerts
+  document.addEventListener('novasentinel:decay-update', (e) => {
+    const count = (e.detail?.alerts?.length ?? 0);
+    if (badge) {
+      if (count > 0) {
+        badge.textContent = count;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+  });
+})();
 
 // Ellipsoid visibility event (from alert panel toggle)
 document.addEventListener('novasentinel:ellipsoid-toggle', (e) => {
@@ -455,6 +583,9 @@ document.addEventListener('novasentinel:ellipsoid-toggle', (e) => {
 document.addEventListener('novasentinel:search-fly', (e) => {
   const noradId = String(e.detail?.noradId ?? '');
   _selectedNoradId = noradId;
+  _followCamera    = false;   // reset follow on new selection
+
+  if (!camera || !controls || !cloud) return; // Guard against early clicks
 
   // Immediately update colors and sizes in the point cloud
   updateCataloguePositions(cloud, _posMap, {
@@ -464,28 +595,32 @@ document.addEventListener('novasentinel:search-fly', (e) => {
 
   // Calculate and display the orbital trajectory line
   const record = _tleMap.get(noradId);
-  if (record && record.satrec) {
+  if (record?.satrec) {
     updateOrbitLineGeometry(orbitLine, record.satrec, new Date());
-    
-    // Set orbit line color to match the selected satellite's status color
     const pos = _posMap.get(noradId);
-    if (pos) {
-      orbitLine.material.color.copy(satelliteColor(pos, noradId));
-    }
+    if (pos) orbitLine.material.color.copy(satelliteColor(pos, noradId));
   } else {
     orbitLine.visible = false;
   }
 
+  // Guard: need a valid propagated position with lat/lon
   const pos = _posMap.get(noradId);
-  if (!pos) return;
-  const target = new THREE.Vector3(
-    pos.eciPos.x / 6371,
-    pos.eciPos.y / 6371,
-    pos.eciPos.z / 6371,
-  );
-  // Fly camera 1.4× Earth-radius above the satellite
-  const camTarget = target.clone().normalize().multiplyScalar(1.55);
-  flyToConjunction(camera, controls, target, camTarget);
+  if (!pos || pos.lat == null) {
+    console.warn('[main] No lat/lon position for satellite', noradId, '— skipping fly-to');
+    return;
+  }
+
+  // Convert geodetic lat/lon → scene units (globe radius = 1)
+  const satWorldObj = geoToWorld(pos.lat, pos.lon, pos.altKm, 1);
+  const satWorld = new THREE.Vector3(satWorldObj.x, satWorldObj.y, satWorldObj.z);
+
+  // Fly camera to a point above the satellite using the dedicated flyToPoint helper
+  flyToPoint(camera, controls, satWorld, { distance: 0.45 });
+});
+
+// Follow-mode toggle from the result card
+document.addEventListener('novasentinel:follow-toggle', (e) => {
+  _followCamera = e.detail?.follow ?? false;
 });
 
 // Search clear event — restores all satellites to original visibility and hides orbit path

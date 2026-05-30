@@ -9,10 +9,18 @@ export default defineConfig({
       // All requests to /spacetrack/* are forwarded to space-track.org.
       // The browser only ever sees localhost — no CORS issue.
       '/spacetrack': {
-        target:      'https://www.space-track.org',
-        changeOrigin: true,                   // sets Host header to space-track.org
-        secure:       true,                   // enforce HTTPS on the target
+        target:       'https://www.space-track.org',
+        changeOrigin: true,
+        secure:       true,
         rewrite:      path => path.replace(/^\/spacetrack/, ''),
+      },
+      // All requests to /celestrak/* are forwarded to celestrak.org.
+      // Required because CelesTrak does not send CORS headers for browser fetches.
+      '/celestrak': {
+        target:       'https://celestrak.org',
+        changeOrigin: true,
+        secure:       true,
+        rewrite:      path => path.replace(/^\/celestrak/, ''),
       },
     },
   },

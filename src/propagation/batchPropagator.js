@@ -136,22 +136,23 @@ export function createPropagator(opts = {}) {
     };
   }
 
-  function _handleWorkerPositions({ data, ids, errors, time }) {
+  function _handleWorkerPositions({ data, ids, objectTypes, errors, time }) {
     const buffer = new Float64Array(data);
 
     for (let i = 0; i < ids.length; i++) {
       const base = i * STRIDE;
       _positionCache.set(ids[i], {
-        lat:       buffer[base],
-        lon:       buffer[base + 1],
-        altKm:     buffer[base + 2],
-        speed:     buffer[base + 3],
-        eciPos:    {
+        lat:        buffer[base],
+        lon:        buffer[base + 1],
+        altKm:      buffer[base + 2],
+        speed:      buffer[base + 3],
+        eciPos:     {
           x: buffer[base + 4],
           y: buffer[base + 5],
           z: buffer[base + 6],
         },
-        timestamp: time,
+        objectType: objectTypes?.[i] ?? '',   // debris / payload / rocket body
+        timestamp:  time,
       });
     }
 
@@ -187,12 +188,13 @@ export function createPropagator(opts = {}) {
           const pos = propagateAt(rec.satrec, date);
           if (pos) {
             _positionCache.set(rec.noradId, {
-              lat:       pos.lat,
-              lon:       pos.lon,
-              altKm:     pos.altKm,
-              speed:     pos.speed,
-              eciPos:    pos.eciPos,
-              timestamp: pos.timestamp,
+              lat:        pos.lat,
+              lon:        pos.lon,
+              altKm:      pos.altKm,
+              speed:      pos.speed,
+              eciPos:     pos.eciPos,
+              objectType: rec.objectType ?? '',   // carry debris/payload type
+              timestamp:  pos.timestamp,
             });
           } else {
             errors.push(rec.noradId);
@@ -232,9 +234,10 @@ export function createPropagator(opts = {}) {
         _worker.postMessage({
           type: 'INIT',
           tles: records.map((r) => ({
-            noradId: r.noradId,
-            line1:   r.line1,
-            line2:   r.line2,
+            noradId:    r.noradId,
+            line1:      r.line1,
+            line2:      r.line2,
+            objectType: r.objectType ?? '',   // DEBRIS / PAYLOAD / ROCKET BODY
           })),
         });
       }
@@ -258,9 +261,10 @@ export function createPropagator(opts = {}) {
         _worker.postMessage({
           type: 'UPDATE',
           tles: records.map((r) => ({
-            noradId: r.noradId,
-            line1:   r.line1,
-            line2:   r.line2,
+            noradId:    r.noradId,
+            line1:      r.line1,
+            line2:      r.line2,
+            objectType: r.objectType ?? '',
           })),
         });
       }

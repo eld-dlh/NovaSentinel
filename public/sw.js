@@ -11,7 +11,7 @@
 //
 // Install: automatically registered in src/main.js
 
-const CACHE_VERSION    = 'novasentinel-v1';
+const CACHE_VERSION    = 'novasentinel-v2';
 const APP_SHELL_CACHE  = `${CACHE_VERSION}-shell`;
 const DATA_CACHE       = `${CACHE_VERSION}-data`;
 
@@ -65,9 +65,10 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   const isDataRequest = DATA_ORIGINS.some(o => url.hostname === o || url.hostname.endsWith(o));
+  const isDocument = event.request.destination === 'document' || url.pathname === '/' || url.pathname === '/index.html';
 
-  if (isDataRequest) {
-    // Network-first: try fresh data, fall back to cache
+  if (isDataRequest || isDocument) {
+    // Network-first: try fresh data/HTML, fall back to cache
     event.respondWith(networkFirst(event.request));
   } else {
     // Cache-first: serve bundled app assets from cache

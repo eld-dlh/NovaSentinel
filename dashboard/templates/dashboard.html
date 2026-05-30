@@ -26,14 +26,8 @@
     available to cdmFetch.js and tleFetch.js immediately on import.
   -->
   <script>
-    /**
-     * Global configuration injected by the Django template.
-     * The JS modules read window.NOVA_CONFIG instead of import.meta.env
-     * so the same JS files work both under Vite dev and Django prod.
-     */
     window.NOVA_CONFIG = {
-      // Django serves the proxy endpoints — no credentials ever reach the browser
-      apiBase:              '',                // same-origin
+      apiBase:              '',
       cdmEndpoint:          '/api/cdm/',
       tleEndpoint:          '/api/tle/',
       ommEndpoint:          '/api/omm/',
@@ -41,19 +35,11 @@
       logRejectedTle:       '/api/log-rejected-tle/',
       logConjunction:       '/api/log-conjunction/',
       statsEndpoint:        '/api/stats/',
-      // Django-rendered context values (from views.py context dict)
       spacetrackIdentity:   "{{ spacetrack_identity|escapejs }}",
       rejectedTleCount:     {{ rejected_count }},
       conjunctionCount:     {{ conjunction_count }},
     };
 
-    /**
-     * Convenience wrapper: $.ajax with the Django API base.
-     * Satisfies syllabus Module 5 (jQuery AJAX).
-     *
-     * Usage:
-     *   novaAjax({ url: '/api/cdm/', success: fn })
-     */
     window.novaAjax = function(opts) {
       return $.ajax(Object.assign({
         method:      'GET',
@@ -66,12 +52,6 @@
       }, opts));
     };
 
-    /**
-     * POST helper for audit log endpoints.
-     *
-     * Usage:
-     *   novaPost('/api/log-rejected-tle/', { noradId: '...', reason: '...' })
-     */
     window.novaPost = function(url, data) {
       return $.ajax({
         url:         url,
@@ -83,103 +63,39 @@
     };
   </script>
 
-  <!-- Stylesheet: always load from dist (latest build) -->
-  <link rel="stylesheet" href="/static/assets/index-B_R4NDS_.css" />
+  <!-- Stylesheet: latest build -->
+  <link rel="stylesheet" href="/static/assets/index-BralT1Jm.css" />
 
-  <!-- Search bar styles — inlined so they always load regardless of Vite state -->
+  <!-- Overrides & new component styles -->
   <style>
-    #search-wrapper {
+    /* ── Full-width layout (no side panels in grid) ── */
+    #main-layout {
       position: fixed;
-      top: 60px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: clamp(280px, 38vw, 500px);
-      z-index: 150;
+      top: var(--header-h, 48px); left: 0; right: 0; bottom: 0;
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr;
+      overflow: hidden;
+    }
+
+    /* ── Search bar — left side ── */
+    #search-wrapper {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      width: clamp(240px, 26vw, 340px);
+      z-index: 80;
       display: flex;
       flex-direction: column;
       gap: 6px;
-      pointer-events: none;
+      transform: none;
     }
-    #search-bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 12px;
-      height: 42px;
-      background: rgba(6, 12, 24, 0.94);
-      border: 1px solid rgba(79,195,247,0.35);
-      border-radius: 21px;
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      box-shadow: 0 4px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(79,195,247,0.08),
-                  inset 0 1px 0 rgba(255,255,255,0.05);
-      transition: border-color 0.2s, box-shadow 0.2s;
-      pointer-events: all;
-    }
-    #search-bar:focus-within {
-      border-color: #4fc3f7;
-      box-shadow: 0 4px 32px rgba(0,0,0,0.65), 0 0 14px rgba(79,195,247,0.25),
-                  inset 0 1px 0 rgba(255,255,255,0.07);
-    }
-    #search-icon { flex-shrink:0; color: #5a7a9a; transition: color 0.2s; }
-    #search-bar:focus-within #search-icon { color: #4fc3f7; }
-    #search-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      font-family: 'Inter', system-ui, sans-serif;
-      font-size: 13px;
-      color: #d0e8ff;
-      caret-color: #4fc3f7;
-      -webkit-appearance: none;
-    }
-    #search-input::placeholder { color: #3a5a7a; }
-    #search-input::-webkit-search-cancel-button { display: none; }
-    .search-clear {
-      flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      width: 22px; height: 22px;
-      background: rgba(79,195,247,0.1); border: 1px solid rgba(79,195,247,0.15);
-      border-radius: 50%; color: #5a7a9a;
-      cursor: pointer; transition: all 0.15s;
-      pointer-events: all;
-    }
-    .search-clear:hover { background: rgba(79,195,247,0.25); color: #d0e8ff; }
-    #search-dropdown {
-      background: rgba(5, 10, 22, 0.98);
-      border: 1px solid rgba(79,195,247,0.3);
-      border-radius: 12px;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      box-shadow: 0 8px 40px rgba(0,0,0,0.7);
-      overflow: hidden;
-      pointer-events: all;
-      animation: srch-drop-in 0.15s ease;
-    }
-    #search-dropdown.hidden { display: none !important; }
-    @keyframes srch-drop-in {
-      from { opacity:0; transform:translateY(-6px); }
-      to   { opacity:1; transform:translateY(0); }
-    }
-    .search-drop-item {
-      display: flex; align-items: center; gap: 8px;
-      padding: 9px 14px;
-      cursor: pointer;
-      transition: background 0.12s;
-      border-bottom: 1px solid rgba(79,195,247,0.06);
-    }
-    .search-drop-item:last-child { border-bottom: none; }
-    .search-drop-item:hover, .search-drop-item.active { background: rgba(79,195,247,0.1); }
-    .sdrop-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-    .sdrop-name {
-      flex:1; font-size:12px; color:#d0e8ff;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    }
-    .sdrop-name mark { background:transparent; color:#4fc3f7; font-weight:600; }
-    .sdrop-id { font-family:'JetBrains Mono',monospace; font-size:10px; color:#3a5a7a; flex-shrink:0; }
-    .sdrop-empty { padding:12px 14px; font-size:12px; color:#3a5a7a; text-align:center; }
+
+    /* ── Draggable satellite result card ── */
     #search-result-card {
+      position: fixed;
+      top: 80px;
+      left: 370px;
       background: rgba(5, 10, 22, 0.98);
       border: 1px solid rgba(79,195,247,0.3);
       border-radius: 14px;
@@ -189,38 +105,125 @@
       padding: 14px;
       pointer-events: all;
       animation: srch-drop-in 0.18s ease;
+      min-width: 280px;
+      max-width: 360px;
+      cursor: default;
+      user-select: none;
+      z-index: 90;
     }
     #search-result-card.hidden { display: none !important; }
-    .src-card-header { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
-    .src-card-tier { width:4px; height:36px; border-radius:2px; flex-shrink:0; }
-    .src-card-title-group { flex:1; min-width:0; }
-    .src-card-name { font-size:13px; font-weight:600; color:#d0e8ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .src-card-id { font-size:10px; color:#3a5a7a; font-family:'JetBrains Mono',monospace; margin-top:2px; }
-    .src-fly-btn {
-      display:flex; align-items:center; gap:5px;
-      padding:5px 11px;
-      background:rgba(79,195,247,0.12); border:1px solid rgba(79,195,247,0.3);
-      border-radius:20px; color:#4fc3f7;
-      font-size:11px; font-family:'Inter',sans-serif; font-weight:500;
-      cursor:pointer; transition:all 0.18s; flex-shrink:0;
+
+    /* Drag handle */
+    #src-card-drag-handle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 0 8px;
+      border-bottom: 1px solid rgba(79,195,247,0.12);
+      margin-bottom: 12px;
+      cursor: grab;
+      color: #5a7a9a;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      user-select: none;
+      font-family: 'Inter', system-ui, sans-serif;
     }
-    .src-fly-btn:hover { background:rgba(79,195,247,0.25); box-shadow:0 0 10px rgba(79,195,247,0.25); }
-    .src-card-poc-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-    .src-poc-label { font-size:10px; color:#5a7a9a; text-transform:uppercase; letter-spacing:.06em; flex-shrink:0; }
-    .src-poc-badge { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; padding:2px 9px; border-radius:6px; border:1px solid; letter-spacing:.02em; }
-    .src-tier-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; flex-shrink:0; }
-    .src-card-risk-bar-wrap { height:4px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden; margin-bottom:12px; }
-    .src-card-risk-bar { height:100%; border-radius:2px; transition:width 0.6s cubic-bezier(.22,1,.36,1); }
-    .src-card-stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 6px; }
-    .src-stat { display:flex; flex-direction:column; gap:2px; background:rgba(255,255,255,0.03); border:1px solid rgba(79,195,247,0.1); border-radius:4px; padding:6px 8px; }
-    .src-stat-label { font-size:9px; color:#3a5a7a; text-transform:uppercase; letter-spacing:.05em; }
-    .src-stat-val { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; color:#d0e8ff; }
-    .src-stat-unit { font-size:9px; color:#5a7a9a; }
+    #src-card-drag-handle:active { cursor: grabbing; }
+
+    /* ── Bell FAB ── */
+    .notif-bell-btn {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      background: rgba(6, 12, 24, 0.92);
+      border: 1px solid rgba(79,195,247,0.30);
+      color: #4fc3f7;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 18px rgba(79,195,247,0.15);
+      backdrop-filter: blur(12px);
+      transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+    }
+    .notif-bell-btn:hover {
+      background: rgba(79,195,247,0.12);
+      box-shadow: 0 4px 30px rgba(0,0,0,0.6), 0 0 24px rgba(79,195,247,0.3);
+      transform: scale(1.07);
+    }
+    .notif-bell-btn.active {
+      background: rgba(79,195,247,0.15);
+      border-color: #4fc3f7;
+      box-shadow: 0 0 0 3px rgba(79,195,247,0.15), 0 4px 24px rgba(0,0,0,0.5);
+    }
+    .notif-badge {
+      position: absolute;
+      top: 6px; right: 6px;
+      min-width: 16px; height: 16px;
+      border-radius: 8px;
+      background: #ff1744;
+      color: #fff;
+      font-size: 9px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 4px;
+      border: 1.5px solid #020409;
+      box-shadow: 0 0 8px rgba(255,23,68,0.5);
+    }
+    .notif-badge.hidden { display: none; }
+
+    /* ── Popup ── */
+    #notif-popup {
+      position: fixed;
+      bottom: 90px;
+      right: 24px;
+      z-index: 190;
+      width: 680px;
+      max-width: calc(100vw - 48px);
+      max-height: calc(100vh - 120px);
+      display: flex;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(79,195,247,0.30);
+      box-shadow: 0 16px 64px rgba(0,0,0,0.8), 0 0 0 1px rgba(79,195,247,0.08);
+      background: rgba(8, 14, 26, 0.88);
+      backdrop-filter: blur(20px);
+      animation: popup-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #notif-popup.hidden { display: none; }
+    @keyframes popup-in {
+      from { opacity: 0; transform: translateY(16px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    #notif-popup-inner {
+      display: flex;
+      width: 100%;
+      min-height: 400px;
+      max-height: calc(100vh - 120px);
+    }
+    #notif-popup-inner aside {
+      display: flex !important;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+      min-width: 0;
+    }
+    #notif-popup-inner #decay-panel { border-right: 1px solid rgba(79,195,247,0.12); }
+
+    /* Keep hidden asides invisible */
+    aside.panel-hidden { display: none !important; }
+
+    /* ── Colour legend — adjusted position (no side panel) ── */
+    #colour-legend { left: 20px !important; }
+
+    /* ── Search bar inner styles ── */
+    #search-dropdown.hidden { display: none !important; }
   </style>
 </head>
 <body>
 
-  <!-- ═══ DB stats banner (only visible when DB has audit records) ═══════════ -->
+  <!-- ═══ DB stats banner ═══════════════════════════════════════════════════ -->
   {% if rejected_count or conjunction_count %}
   <div id="db-stats-banner" style="
       background: linear-gradient(90deg,#0a1628,#12253d);
@@ -265,37 +268,47 @@
     </div>
 
     <div id="header-controls">
-      <button id="reset-camera-btn" class="icon-btn" title="Reset view" aria-label="Reset camera">
+      <button type="button" id="reset-camera-btn" class="icon-btn" title="Reset view" aria-label="Reset camera">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
       </button>
       <div id="status-dot" class="status-dot" title="Connection status" aria-label="Status: connecting"></div>
     </div>
   </header>
 
-  <!-- ═══ Main layout: [decay panel] [globe] [alert panel] ════════════════ -->
+  <!-- ═══ Main layout: full-width globe ════════════════════════════════════ -->
   <main id="main-layout" role="main">
-
-    <!-- Left panel: Brain.js decay predictions -->
-    <aside id="decay-panel" aria-label="Orbital decay predictions">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Decay Forecast
-        </h2>
-        <span class="panel-badge" id="decay-count">0 alerts</span>
-      </div>
-      <div class="panel-subtext">Brain.js LSTM · 3-step horizon</div>
-      <div id="decay-list" class="scroll-list">
-        <div class="decay-empty">
-          <div class="decay-empty-icon">🛸</div>
-          <div>Training model…</div>
-        </div>
-      </div>
-    </aside>
 
     <!-- Centre: Three.js WebGL canvas -->
     <section id="globe-section" aria-label="3D Earth globe">
       <canvas id="globe-canvas" aria-label="Interactive 3D globe showing tracked space objects"></canvas>
+
+      <!-- ── Satellite Search Bar (left side) ───────────────────────────── -->
+      <div id="search-wrapper" role="search" aria-label="Satellite search">
+        <div id="search-bar">
+          <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               width="15" height="15" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            id="search-input"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search by name or NORAD ID…"
+            aria-label="Search satellite by name or NORAD ID"
+            aria-autocomplete="list"
+            aria-controls="search-dropdown"
+            aria-haspopup="listbox"
+          />
+          <button type="button" id="search-clear-btn" class="search-clear" aria-label="Clear search" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Dropdown suggestions -->
+        <div id="search-dropdown" class="hidden" role="listbox" aria-label="Search suggestions"></div>
+      </div>
 
       <!-- Loading overlay -->
       <div id="loading-overlay">
@@ -304,143 +317,145 @@
         <div class="loader-sub" id="loader-sub">Loading Three.js scene</div>
       </div>
     </section>
-
-    <!-- ══ Satellite Search — fixed overlay, always on top ══════════════════ -->
-    <div id="search-wrapper" role="search" aria-label="Satellite search">
-      <div id="search-bar">
-        <svg id="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             width="15" height="15" aria-hidden="true">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input
-          id="search-input"
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Search by name or NORAD ID…"
-          aria-label="Search satellite by name or NORAD ID"
-          aria-autocomplete="list"
-          aria-controls="search-dropdown"
-          aria-haspopup="listbox"
-        />
-        <button id="search-clear-btn" class="search-clear" aria-label="Clear search" style="display:none">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-      <!-- Dropdown suggestions -->
-      <div id="search-dropdown" class="hidden" role="listbox" aria-label="Search suggestions"></div>
-      <!-- Result card -->
-      <div id="search-result-card" class="hidden" role="region" aria-label="Satellite details"></div>
-    </div>
-
-    <!-- ══ Colour legend ═══════════════════════════════════════════════════ -->
-    <div id="colour-legend" aria-label="Object type colour key" style="
-        position:fixed; bottom:20px; left:310px;
-        background:rgba(4,8,18,0.88); border:1px solid rgba(79,195,247,0.2);
-        border-radius:10px; padding:9px 13px; backdrop-filter:blur(12px);
-        display:flex; flex-direction:column; gap:5px; z-index:90;
-        font-family:'Inter',system-ui,sans-serif; font-size:10px;">
-      <div style="color:#5a7a9a;text-transform:uppercase;letter-spacing:.07em;font-size:9px;margin-bottom:2px;">Object Legend</div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:#4fc3f7;box-shadow:0 0 5px #4fc3f7;flex-shrink:0"></span>
-        <span style="color:#b0cce0">Payload / Satellite</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ff6b35;box-shadow:0 0 5px #ff6b35;flex-shrink:0"></span>
-        <span style="color:#b0cce0">Debris</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:#b39ddb;box-shadow:0 0 5px #b39ddb;flex-shrink:0"></span>
-        <span style="color:#b0cce0">Rocket Body</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:7px;margin-top:2px;padding-top:5px;border-top:1px solid rgba(79,195,247,0.1)">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ff1744;box-shadow:0 0 6px #ff1744;flex-shrink:0"></span>
-        <span style="color:#b0cce0">High Risk (PoC)</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ffa726;box-shadow:0 0 5px #ffa726;flex-shrink:0"></span>
-        <span style="color:#b0cce0">Elevated Risk</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:#00e676;box-shadow:0 0 5px #00e676;flex-shrink:0"></span>
-        <span style="color:#b0cce0">Low Risk</span>
-      </div>
-    </div>
-
-    <!-- Right panel: Conjunction alerts -->
-    <aside id="alert-panel" aria-label="Conjunction alerts">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Conjunctions
-        </h2>
-        <span class="panel-badge" id="alert-count">0 events</span>
-      </div>
-
-      <!-- Controls -->
-      <div id="panel-controls">
-        <!-- Threshold -->
-        <div class="control-group">
-          <label class="control-label" for="threshold-slider">
-            Risk threshold
-            <span id="threshold-label" class="control-value">PoC ≥ 10⁻⁴</span>
-          </label>
-          <input type="range" id="threshold-slider" min="0" max="3" step="1" value="2"
-                 aria-label="Probability of collision threshold" />
-          <div class="slider-ticks">
-            <span>10⁻⁶</span><span>10⁻⁵</span><span>10⁻⁴</span><span>10⁻³</span>
-          </div>
-        </div>
-
-        <!-- Filters -->
-        <div class="control-group filter-row">
-          <label class="check-label">
-            <input type="checkbox" id="filter-debris" checked />
-            <span>Debris</span>
-          </label>
-          <label class="check-label">
-            <input type="checkbox" id="filter-payload" checked />
-            <span>Payload</span>
-          </label>
-        </div>
-
-        <!-- Ellipsoid toggle -->
-        <div class="control-group toggle-row">
-          <span class="control-label">CDM Ellipsoids</span>
-          <label class="toggle-switch" aria-label="Toggle CDM uncertainty ellipsoids">
-            <input type="checkbox" id="ellipsoid-toggle" checked />
-            <span class="toggle-track"></span>
-          </label>
-        </div>
-      </div>
-
-      <div id="alert-list" class="scroll-list">
-        <div class="alert-empty">
-          <div class="alert-empty-icon">✓</div>
-          <div>No CDM data yet</div>
-        </div>
-      </div>
-
-      <div id="panel-footer">
-        <button id="export-csv-btn" class="btn-secondary" aria-label="Export alert list as CSV">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Export CSV
-        </button>
-      </div>
-    </aside>
   </main>
+
+  <!-- ── Draggable Satellite Result Card (floats freely over the scene) ── -->
+  <div id="search-result-card" class="hidden" role="region" aria-label="Satellite details">
+    <div id="src-card-drag-handle" aria-label="Drag to move">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+      <span>Satellite Details</span>
+      <button type="button" id="src-card-close-btn" aria-label="Close satellite details" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="11" height="11"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Hidden panels (move into popup on bell click) ─────────────────── -->
+  <!-- Left panel: Decay Forecast -->
+  <aside id="decay-panel" aria-label="Orbital decay predictions" class="panel-hidden">
+    <div class="panel-header">
+      <h2 class="panel-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Decay Forecast
+      </h2>
+      <span class="panel-badge" id="decay-count">0 alerts</span>
+    </div>
+    <div class="panel-subtext">Brain.js LSTM · 3-step horizon</div>
+    <div id="decay-list" class="scroll-list">
+      <div class="decay-empty">
+        <div class="decay-empty-icon">🛸</div>
+        <div>Training model…</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right panel: Conjunction alerts -->
+  <aside id="alert-panel" aria-label="Conjunction alerts" class="panel-hidden">
+    <div class="panel-header">
+      <h2 class="panel-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Conjunctions
+      </h2>
+      <span class="panel-badge" id="alert-count">0 events</span>
+    </div>
+    <div id="panel-controls">
+      <div class="control-group">
+        <label class="control-label" for="threshold-slider">
+          Risk threshold
+          <span id="threshold-label" class="control-value">PoC ≥ 10⁻⁴</span>
+        </label>
+        <input type="range" id="threshold-slider" min="0" max="3" step="1" value="2"
+               aria-label="Probability of collision threshold" />
+        <div class="slider-ticks">
+          <span>10⁻⁶</span><span>10⁻⁵</span><span>10⁻⁴</span><span>10⁻³</span>
+        </div>
+      </div>
+      <div class="control-group filter-row">
+        <label class="check-label">
+          <input type="checkbox" id="filter-debris" checked />
+          <span>Debris</span>
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="filter-payload" checked />
+          <span>Payload</span>
+        </label>
+      </div>
+      <div class="control-group toggle-row">
+        <span class="control-label">CDM Ellipsoids</span>
+        <label class="toggle-switch" aria-label="Toggle CDM uncertainty ellipsoids">
+          <input type="checkbox" id="ellipsoid-toggle" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+    <div id="alert-list" class="scroll-list">
+      <div class="alert-empty">
+        <div class="alert-empty-icon">✓</div>
+        <div>No CDM data yet</div>
+      </div>
+    </div>
+    <div id="panel-footer">
+      <button type="button" id="export-csv-btn" class="btn-secondary" aria-label="Export alert list as CSV">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Notification popup ─────────────────────────────────────────────── -->
+  <div id="notif-popup" class="hidden" role="dialog" aria-label="Space alerts and forecasts">
+    <div id="notif-popup-inner"></div>
+  </div>
+
+  <!-- ── Notification bell button (bottom-right) ───────────────────────── -->
+  <button type="button" id="notif-btn" class="notif-bell-btn" aria-label="Toggle alerts popup" title="Space Alerts">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+    <span id="notif-badge" class="notif-badge hidden">0</span>
+  </button>
+
+  <!-- ── Colour legend ─────────────────────────────────────────────────── -->
+  <div id="colour-legend" aria-label="Object type colour key" style="
+      position:fixed; bottom:20px; left:20px;
+      background:rgba(4,8,18,0.88); border:1px solid rgba(79,195,247,0.2);
+      border-radius:10px; padding:9px 13px; backdrop-filter:blur(12px);
+      display:flex; flex-direction:column; gap:5px; z-index:90;
+      font-family:'Inter',system-ui,sans-serif; font-size:10px;">
+    <div style="color:#5a7a9a;text-transform:uppercase;letter-spacing:.07em;font-size:9px;margin-bottom:2px;">Object Legend</div>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span style="width:8px;height:8px;border-radius:50%;background:#4fc3f7;box-shadow:0 0 5px #4fc3f7;flex-shrink:0"></span>
+      <span style="color:#b0cce0">Payload / Satellite</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span style="width:8px;height:8px;border-radius:50%;background:#ff6b35;box-shadow:0 0 5px #ff6b35;flex-shrink:0"></span>
+      <span style="color:#b0cce0">Debris</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span style="width:8px;height:8px;border-radius:50%;background:#b39ddb;box-shadow:0 0 5px #b39ddb;flex-shrink:0"></span>
+      <span style="color:#b0cce0">Rocket Body</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;margin-top:2px;padding-top:5px;border-top:1px solid rgba(79,195,247,0.1)">
+      <span style="width:8px;height:8px;border-radius:50%;background:#ff1744;box-shadow:0 0 6px #ff1744;flex-shrink:0"></span>
+      <span style="color:#b0cce0">High Risk (PoC)</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span style="width:8px;height:8px;border-radius:50%;background:#ffa726;box-shadow:0 0 5px #ffa726;flex-shrink:0"></span>
+      <span style="color:#b0cce0">Elevated Risk</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span style="width:8px;height:8px;border-radius:50%;background:#00e676;box-shadow:0 0 5px #00e676;flex-shrink:0"></span>
+      <span style="color:#b0cce0">Low Risk</span>
+    </div>
+  </div>
 
   <!-- Hover tooltip -->
   <div id="object-tooltip" role="tooltip" aria-live="polite"></div>
 
   <!--
     Django AJAX bootstrap — initialises the Space-Track session via the
-    Django proxy endpoint.  This replaces the direct browser login that
-    used to happen in main.js (which exposed credentials in the browser).
-
-    Module 5 (jQuery + AJAX) is demonstrated here.
+    Django proxy endpoint.
   -->
   <script>
     $(function () {
@@ -452,7 +467,7 @@
           url:    window.NOVA_CONFIG.spacetrackLogin,
           method: 'POST',
           contentType: 'application/json',
-          data:   '{}',   // credentials are in Django settings.py — not here
+          data:   '{}',
           success: function (data) {
             console.info('[django-ajax] Space-Track proxy login:', data.status);
           },
@@ -462,13 +477,12 @@
         });
       }
 
-      /* ── 2. Poll live DB stats every 60 s and update the header ── */
+      /* ── 2. Poll live DB stats every 60 s ── */
       function refreshDbStats() {
         $.ajax({
           url:     window.NOVA_CONFIG.statsEndpoint,
           method:  'GET',
           success: function (data) {
-            // Optionally surface DB counts in the UI — extend as needed
             console.info('[django-ajax] DB stats:', data);
           },
         });
@@ -481,14 +495,13 @@
   <!--
     Vite bundle entry point.
     In DEBUG mode, Vite dev server provides HMR at localhost:5173.
-    In production, the bundle is served from /static/assets/index.js
-    (built by `npm run build` and collected by `manage.py collectstatic`).
+    In production, the bundle is served from /static/assets/.
   -->
   {% if debug %}
   <script type="module" src="http://localhost:5173/@vite/client"></script>
   <script type="module" src="http://localhost:5173/src/main.js"></script>
   {% else %}
-  <script type="module" src="{% static 'assets/index.js' %}"></script>
+  <script type="module" src="/static/assets/index-BylcUAup.js"></script>
   {% endif %}
 </body>
 </html>

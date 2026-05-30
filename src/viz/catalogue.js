@@ -255,14 +255,14 @@ export function updateCataloguePositions(cloud, positionMap, opts = {}) {
         sizeBuf[idx] = 6.0; // selected satellite highlight
       } else {
         // Dim all other satellites down
-        sizeBuf[idx] = type.includes('DEBRIS') ? 0.4
+        sizeBuf[idx] = type.includes('DEBRIS') ? 0.7
                      : type.includes('ROCKET') ? 0.6
                      : 0.8;
       }
     } else {
-      sizeBuf[idx] = type.includes('DEBRIS') ? 0.4
-                   : type.includes('ROCKET') ? 0.6
-                   : 0.8;
+      sizeBuf[idx] = type.includes('DEBRIS') ? 1.8
+                   : type.includes('ROCKET') ? 1.4
+                   : 1.0;
     }
 
     indexMap.set(noradId, idx);
