@@ -158,8 +158,8 @@ describe('Stage 5 — Brain.js decay sequences from TLE catalogue', () => {
   });
 
   test('meanMotionToAlt gives physically correct altitude for ISS mean motion', () => {
-    // ISS no_kozai ≈ 0.067221 rad/min → alt ≈ 408 km
-    const NO_KOZAI_ISS = 0.067221;
+    // ISS no_kozai ≈ 0.067631 rad/min → alt ≈ 424 km
+    const NO_KOZAI_ISS = 0.067631;
     const alt = meanMotionToAlt(NO_KOZAI_ISS);
     assert.ok(
       alt >= 380 && alt <= 440,

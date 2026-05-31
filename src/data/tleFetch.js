@@ -53,14 +53,14 @@ const GROUP_URLS = {
   oneweb: `${CELESTRAK_BASE_URL}?GROUP=oneweb&FORMAT=tle`,
   iridium: `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
 
-  // ── Debris groups (OMM JSON format) ─────────────────────────────────────
+  // ── Debris groups (TLE format) ─────────────────────────────────────
   // Each group corresponds to a major historic fragmentation event.
   // These use CELESTRAK_PROXY_BASE so requests go through the Vite /celestrak proxy,
   // avoiding CORS errors in the browser dev environment.
-  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=1999-025&FORMAT=json`,         // Fengyun-1C ASAT (2007)
-  debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=json`,  // Iridium-33 collision (2009)
-  debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=json`, // Cosmos-2251 collision (2009)
-  debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=json`, // Cosmos-1408 ASAT (2021)
+  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?INTDES=1999-025&FORMAT=tle`,
+  debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=tle`,
+  debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=tle`,
+  debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=tle`, // Cosmos-1408 ASAT (2021)
 };
 
 /**
@@ -77,10 +77,10 @@ export const DEBRIS_GROUPS = [
 /**
  * CelesTrak SPECIAL=DECAYING endpoint — objects actively re-entering.
  * Returns a mix of rocket bodies, dead payloads, and fragments.
- * Filter by name suffix ('DEB', 'R/B') or OBJECT_TYPE for pure debris.
+ * Filter by name suffix ('DEB', 'R/B') for pure debris.
  * Routes through /celestrak proxy to avoid CORS in the browser.
  */
-export const CELESTRAK_DECAYING_URL = `${CELESTRAK_PROXY_BASE}?SPECIAL=DECAYING&FORMAT=json`;
+export const CELESTRAK_DECAYING_URL = `${CELESTRAK_PROXY_BASE}?SPECIAL=DECAYING&FORMAT=tle`;
 
 /** Default fetch interval: 6 hours (CelesTrak refresh cadence) */
 const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -260,49 +260,13 @@ export async function fetchTLEs(group = 'active', opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// OMM JSON parser
-// ---------------------------------------------------------------------------
-
-/**
- * Parses a CelesTrak OMM JSON response (FORMAT=json) into the same
- * TLERecord shape produced by parseTLEText(), so the rest of the pipeline
- * (filterValidTLEs, propagation, etc.) works without modification.
- *
- * OMM JSON records expose TLE_LINE1 / TLE_LINE2 alongside structured
- * orbital elements, so we delegate to parseTLEText() on the reconstructed
- * 3-line block for checksum / satrec consistency.
- *
- * @param {Object[]} ommArray  — Parsed JSON array from CelesTrak.
- * @param {string}   source    — Human-readable group label for tagging.
- * @returns {import('./tleParser.js').TLERecord[]}
- */
-function parseOMMJson(ommArray, source) {
-  if (!Array.isArray(ommArray) || ommArray.length === 0) return [];
-
-  // Rebuild the classic 3-line TLE text block from the OMM fields so that
-  // parseTLEText (+ satellite.js) can validate checksums and build satrecs.
-  const tleText = ommArray
-    .filter(o => o.TLE_LINE1 && o.TLE_LINE2)
-    .map(o => `${o.OBJECT_NAME ?? o.SATNAME ?? 'UNKNOWN'}\n${o.TLE_LINE1}\n${o.TLE_LINE2}`)
-    .join('\n');
-
-  const records = parseTLEText(tleText);
-
-  // Stamp every record with its debris source group so callers can tell
-  // which fragmentation event it came from (useful for colouring the 3D scene).
-  records.forEach(r => { r.debrisSource = source; r.objectType = 'DEBRIS'; });
-
-  return records;
-}
-
-// ---------------------------------------------------------------------------
 // Debris-specific fetch helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Fetches a single CelesTrak debris group by its GROUP_URLS key.
  * Returns validated TLERecords tagged with `debrisSource` and `objectType`.
- *
+ * 
  * @param {string} groupKey  — Key from GROUP_URLS (e.g. 'debris_fengyun').
  * @param {{ maxAgeDays?: number, auditLog?: Array }} [opts]
  * @returns {Promise<import('./tleParser.js').TLERecord[]>}
@@ -311,20 +275,24 @@ export async function fetchDebrisGroup(groupKey, opts = {}) {
   const url = GROUP_URLS[groupKey];
   if (!url) throw new Error(`[tleFetch] Unknown debris group key: "${groupKey}"`);
 
-  let json;
+  let text;
   try {
     const res = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
+      headers: { 'Accept': 'text/plain' },
       signal: AbortSignal.timeout?.(30_000) ?? undefined,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    json = await res.json();
+    text = await res.text();
   } catch (err) {
     console.error(`[tleFetch] fetchDebrisGroup("${groupKey}") failed:`, err.message);
     return [];
   }
 
-  const records = parseOMMJson(json, groupKey);
+  const records = parseTLEText(text);
+  // Stamp every record with its debris source group so callers can tell
+  // which fragmentation event it came from (useful for colouring the 3D scene).
+  records.forEach(r => { r.debrisSource = groupKey; r.objectType = 'DEBRIS'; });
+
   // Debris TLEs from historic fragmentation events are often months or years old.
   // Pass maxAgeDays: Infinity so the epoch-freshness check does not reject them.
   // Checksum and physical-plausibility checks still apply.
@@ -337,34 +305,39 @@ export async function fetchDebrisGroup(groupKey, opts = {}) {
  * Fetches actively-decaying objects (debris, rocket bodies, dead payloads)
  * from CelesTrak's SPECIAL=DECAYING endpoint.
  * Name-based filtering is applied to return only objects whose name ends
- * in ' DEB' or ' R/B', or whose OBJECT_TYPE field is 'DEBRIS'.
- *
+ * in ' DEB' or ' R/B'.
+ * 
  * @returns {Promise<import('./tleParser.js').TLERecord[]>}
  */
-export async function fetchDecayingDebris() {
-  let json;
+export async function fetchDecayingDebris() { 
+  let text;
   try {
     const res = await fetch(CELESTRAK_DECAYING_URL, {
-      headers: { 'Accept': 'application/json' },
+      headers: { 'Accept': 'text/plain' },
       signal: AbortSignal.timeout?.(30_000) ?? undefined,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    json = await res.json();
+    text = await res.text();
   } catch (err) {
     console.error('[tleFetch] fetchDecayingDebris() failed:', err.message);
     return [];
   }
 
-  // Filter to debris & rocket bodies by OBJECT_TYPE or name suffix
-  const debrisOnly = json.filter(o => {
-    const type = (o.OBJECT_TYPE ?? '').toUpperCase();
-    const name = (o.OBJECT_NAME ?? o.SATNAME ?? '').toUpperCase();
-    return type === 'DEBRIS' || type === 'ROCKET BODY' ||
-           name.endsWith(' DEB') || name.endsWith(' R/B');
+  const records = parseTLEText(text);
+
+  // Filter to debris & rocket bodies by name suffix
+  const debrisOnly = records.filter(r => {
+    const name = (r.name ?? '').toUpperCase();
+    return name.endsWith(' DEB') || name.endsWith(' R/B') || name.includes(' DEBRIS');
   });
 
-  const records   = parseOMMJson(debrisOnly, 'decaying');
-  const validated = filterValidTLEs(records);
+  // Stamp every record with its source and type
+  debrisOnly.forEach(r => {
+    r.debrisSource = 'decaying';
+    r.objectType = r.name.toUpperCase().endsWith(' R/B') ? 'ROCKET BODY' : 'DEBRIS';
+  });
+
+  const validated = filterValidTLEs(debrisOnly);
   console.info(`[tleFetch] ✓ ${validated.length} decaying-debris records loaded`);
   return validated;
 }

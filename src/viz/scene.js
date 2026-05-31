@@ -22,7 +22,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-const STARFIELD_COUNT  = 6_000;
+const STARFIELD_COUNT = 6_000;
 const STARFIELD_RADIUS = 90;      // far enough never to intersect the globe
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ function createStarfield(scene) {
       d = x * x + y * y + z * z;
     } while (d > 1 || d === 0);
     const r = STARFIELD_RADIUS / Math.sqrt(d);
-    positions[i * 3]     = x * r;
+    positions[i * 3] = x * r;
     positions[i * 3 + 1] = y * r;
     positions[i * 3 + 2] = z * r;
   }
@@ -77,14 +77,14 @@ function createStarfield(scene) {
 
   // Custom shader: circular dots, no overdraw, cheaper than PointsMaterial
   const mat = new THREE.ShaderMaterial({
-    vertexShader:   STAR_VERT,
+    vertexShader: STAR_VERT,
     fragmentShader: STAR_FRAG,
-    transparent:    true,
-    depthWrite:     false,
+    transparent: true,
+    depthWrite: false,
   });
 
   const stars = new THREE.Points(geo, mat);
-  stars.name  = 'starfield';
+  stars.name = 'starfield';
   // frustumCulled stays true — bounding sphere set above covers it
   scene.add(stars);
   return stars;
@@ -112,7 +112,7 @@ export function initScene(canvas) {
   // ── Renderer ──────────────────────────────────────────────────────────────
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias:       true,
+    antialias: true,
     powerPreference: 'high-performance',  // ★ use discrete GPU on laptops/desktops
     // logarithmicDepthBuffer: false (default) — was true, costs 5-10% GPU for
     // minimal benefit at our depth ratios (near=0.01, far=200, all > 1 unit)
@@ -124,7 +124,7 @@ export function initScene(canvas) {
 
   // NoToneMapping skips the ACES per-fragment curve — saves ~3% GPU
   // The satellite shaders use additive blending which works better untonemapped
-  renderer.toneMapping      = THREE.NoToneMapping;
+  renderer.toneMapping = THREE.NoToneMapping;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   // ── Scene ──────────────────────────────────────────────────────────────────
@@ -138,14 +138,14 @@ export function initScene(canvas) {
 
   // ── OrbitControls ──────────────────────────────────────────────────────────
   const controls = new OrbitControls(camera, canvas);
-  controls.enableDamping    = true;
-  controls.dampingFactor    = 0.07;
-  controls.rotateSpeed      = 0.4;
-  controls.zoomSpeed        = 0.8;
-  controls.panSpeed         = 0.4;
-  controls.minDistance      = 1.15;   // just above Earth surface
-  controls.maxDistance      = 12;     // GEO belt visible
-  controls.enablePan        = false;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.07;
+  controls.rotateSpeed = 0.4;
+  controls.zoomSpeed = 0.8;
+  controls.panSpeed = 0.4;
+  controls.minDistance = 1.15;   // just above Earth surface
+  controls.maxDistance = 12;     // GEO belt visible
+  controls.enablePan = false;
   controls.screenSpacePanning = false;
 
   // ── Lighting ───────────────────────────────────────────────────────────────
@@ -207,9 +207,9 @@ export function startRenderLoop(ctx, onFrame) {
   let last = performance.now();
 
   function frame(now) {
-    rafId    = requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.1);  // cap dt at 100ms
-    last     = now;
+    last = now;
     controls.update();
     if (onFrame) onFrame(dt);
     renderer.render(scene, camera);
