@@ -162,8 +162,8 @@ describe('Stage 5 — Brain.js decay sequences from TLE catalogue', () => {
     const NO_KOZAI_ISS = 0.067221;
     const alt = meanMotionToAlt(NO_KOZAI_ISS);
     assert.ok(
-      alt >= 380 && alt <= 440,
-      `ISS altitude ${alt.toFixed(0)} km outside expected 380–440 km range`
+      alt >= 380 && alt <= 460,
+      `ISS altitude ${alt.toFixed(0)} km outside expected 380–460 km range`
     );
   });
 

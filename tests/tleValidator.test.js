@@ -34,8 +34,8 @@ const fixtureText  = readFileSync(FIXTURE_PATH, 'utf-8');
 // ── Helper: build a synthetic satrec-like TLERecord ────────────────────────
 function makeFakeRecord(overrides = {}) {
   // Valid ISS lines (checksums correct, epoch recent-ish)
-  const LINE1 = '1 25544U 98067A   24001.50000000  .00002182  00000-0  40333-4 0  9990';
-  const LINE2 = '2 25544  51.6400 181.0000 0003210  87.0000 273.1000 15.50000000000012';
+  const LINE1 = '1 25544U 98067A   24001.50000000  .00002182  00000-0  40333-4 0  9992';
+  const LINE2 = '2 25544  51.6400 181.0000 0003210  87.0000 273.1000 15.50000000000014';
   return {
     name:    overrides.name    ?? 'ISS (ZARYA)',
     noradId: overrides.noradId ?? '25544',
@@ -60,14 +60,14 @@ function makeFakeRecord(overrides = {}) {
 describe('computeChecksum', () => {
 
   test('computes correct checksum for ISS Line 1', () => {
-    const line = '1 25544U 98067A   24001.50000000  .00002182  00000-0  40333-4 0  9990';
-    // The last digit (index 68) is 0 — compute should return 0
+    const line = '1 25544U 98067A   24001.50000000  .00002182  00000-0  40333-4 0  9992';
+    // The last digit (index 68) is 2 — compute should return 2
     const computed = computeChecksum(line);
     assert.equal(computed, parseInt(line[68], 10));
   });
 
   test('checksumValid returns true for valid line', () => {
-    const line = '2 25544  51.6400 181.0000 0003210  87.0000 273.1000 15.50000000000012';
+    const line = '2 25544  51.6400 181.0000 0003210  87.0000 273.1000 15.50000000000014';
     assert.ok(checksumValid(line));
   });
 
