@@ -57,10 +57,10 @@ const GROUP_URLS = {
   // Each group corresponds to a major historic fragmentation event.
   // These use CELESTRAK_PROXY_BASE so requests go through the Vite /celestrak proxy,
   // avoiding CORS errors in the browser dev environment.
-  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=1999-025&FORMAT=json`,         // Fengyun-1C ASAT (2007)
-  debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=json`,  // Iridium-33 collision (2009)
-  debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=json`, // Cosmos-2251 collision (2009)
-  debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=json`, // Cosmos-1408 ASAT (2021)
+  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=1999-025&FORMAT=tle`,         // Fengyun-1C ASAT (2007)
+  debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=tle`,  // Iridium-33 collision (2009)
+  debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=tle`, // Cosmos-2251 collision (2009)
+  debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=tle`, // Cosmos-1408 ASAT (2021)
 };
 
 /**
@@ -311,20 +311,20 @@ export async function fetchDebrisGroup(groupKey, opts = {}) {
   const url = GROUP_URLS[groupKey];
   if (!url) throw new Error(`[tleFetch] Unknown debris group key: "${groupKey}"`);
 
-  let json;
+  let text;
   try {
     const res = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout?.(30_000) ?? undefined,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    json = await res.json();
+    text = await res.text();
   } catch (err) {
     console.error(`[tleFetch] fetchDebrisGroup("${groupKey}") failed:`, err.message);
     return [];
   }
 
-  const records = parseOMMJson(json, groupKey);
+  const records = parseTLEText(text);
+  records.forEach(r => { r.debrisSource = groupKey; r.objectType = 'DEBRIS'; });
   // Debris TLEs from historic fragmentation events are often months or years old.
   // Pass maxAgeDays: Infinity so the epoch-freshness check does not reject them.
   // Checksum and physical-plausibility checks still apply.
