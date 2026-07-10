@@ -45,7 +45,10 @@ const GROUP_URLS = {
   iridium:         `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
 
   // Debris
-  debris_fengyun:  `${CELESTRAK_BASE_URL}?GROUP=1999-025G&FORMAT=tle`, // Fengyun-1C debris field
+  debris_fengyun:   `${CELESTRAK_BASE_URL}?GROUP=1999-025&FORMAT=tle`,    // Fengyun-1C debris field
+  debris_iridium33: `${CELESTRAK_BASE_URL}?GROUP=iridium-33-debris&FORMAT=tle`,
+  debris_cosmos2251:`${CELESTRAK_BASE_URL}?GROUP=cosmos-2251-debris&FORMAT=tle`,
+  debris_cosmos1408:`${CELESTRAK_BASE_URL}?GROUP=cosmos-1408-debris&FORMAT=tle`,
 };
 
 /** Default fetch interval: 6 hours (CelesTrak refresh cadence) */
