@@ -65,7 +65,7 @@ const earth = createEarth(scene);
 // Satellite point cloud (up to 12k objects)
 // pointSize removed — per-satellite sizes now set via sizeBuf in updateCataloguePositions()
 const cloud = createCatalogueCloud(scene, {
-  maxObjects:   12_000,
+  maxObjects:   30_000,
   defaultColor: new THREE.Color(0x4fc3f7),
 });
 

@@ -57,7 +57,7 @@ const GROUP_URLS = {
   // Each group corresponds to a major historic fragmentation event.
   // These use CELESTRAK_PROXY_BASE so requests go through the Vite /celestrak proxy,
   // avoiding CORS errors in the browser dev environment.
-  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=1999-025&FORMAT=tle`,         // Fengyun-1C ASAT (2007)
+  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=fengyun-1c-debris&FORMAT=tle`, // Fengyun-1C ASAT (2007)
   debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=tle`,  // Iridium-33 collision (2009)
   debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=tle`, // Cosmos-2251 collision (2009)
   debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=tle`, // Cosmos-1408 ASAT (2021)
