@@ -39,7 +39,7 @@ import { initScene, startRenderLoop }                 from './viz/scene.js';
 import { createEarth }                                from './viz/earth.js';
 import { createCatalogueCloud, updateCataloguePositions, geoToWorld } from './viz/catalogue.js';
 import { createUncertaintyEllipsoid, orientEllipsoidRTN,
-         clearEllipsoids }                            from './viz/ellipsoid.js';
+         clearEllipsoids, pickEllipsoid }              from './viz/ellipsoid.js';
 import { pocToColor }                                 from './viz/riskColors.js';
 import { flyToConjunction, flyToPoint, resetCamera } from './viz/cameraControls.js';
 import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
@@ -50,6 +50,7 @@ import { initAlertPanel, updateAlertPanel }           from './ui/alertPanel.js';
 import { initDecayPanel, updateDecayPanel }           from './ui/decayPanel.js';
 import { initTooltip, registerTooltipData }           from './ui/objectTooltip.js';
 import { initSearch, updateSearchData }               from './ui/searchPanel.js';
+import { showConjunctionCard, hideConjunctionCard }   from './ui/conjunctionCard.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Bootstrap Three.js scene
@@ -512,6 +513,50 @@ initDecayPanel();
 
 // Tooltip
 initTooltip(canvas, camera, _posMap);
+
+// ── Ellipsoid click handler ───────────────────────────────────────────────
+// Priority: satellite dots (handled inside objectTooltip.js click listener)
+// take precedence. We check for an ellipsoid hit only if there are ellipsoids
+// present and the objectTooltip raycaster does NOT return a satellite hit
+// at this click position. The satellite click fires its own CustomEvent so we
+// detect satellite priority by re-running the Points raycast inline.
+{
+  const _satRaycaster = new THREE.Raycaster();
+  const _satMouse     = new THREE.Vector2();
+  _satRaycaster.params.Points = { threshold: 0.006 };
+
+  canvas.addEventListener('click', (e) => {
+    // Guard: nothing to pick
+    if (_ellipsoids.length === 0) return;
+
+    // Check if a satellite dot sits under this click — dots take priority
+    const rect = canvas.getBoundingClientRect();
+    _satMouse.set(
+      ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((e.clientY - rect.top)  / rect.height) * -2 + 1,
+    );
+    _satRaycaster.setFromCamera(_satMouse, camera);
+    if (cloud?.points) {
+      const satHits = _satRaycaster.intersectObject(cloud.points, false);
+      if (satHits.length > 0) {
+        // A satellite dot was clicked — dismiss the card and let the
+        // objectTooltip handler deal with the satellite selection.
+        hideConjunctionCard();
+        return;
+      }
+    }
+
+    // Raycast against ellipsoid meshes
+    const hit = pickEllipsoid(e, _ellipsoids, camera, canvas, _cdmRecords);
+    if (!hit || !hit.tooltip) {
+      // Clicked empty space — dismiss card
+      hideConjunctionCard();
+      return;
+    }
+
+    showConjunctionCard(hit.tooltip, e.clientX, e.clientY);
+  });
+}
 
 // Search panel
 initSearch();

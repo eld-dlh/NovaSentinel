@@ -737,3 +737,131 @@ input[type=range]::-webkit-slider-thumb {
 aside[style*="display:none"] { display: none !important; }
 
 /* ── Object Legend (always visible bottom-left) ─────────────────────────── */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Conjunction Detail Card  (#conjunction-card)
+   Shown when the user clicks an uncertainty ellipsoid on the globe.
+   Mirrors the glassmorphism style of #search-result-card.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#conjunction-card {
+  position: fixed;
+  z-index: 210;            /* above object-tooltip (200) */
+  min-width: 270px;
+  max-width: 340px;
+  background: rgba(5, 10, 22, 0.97);
+  border: 1px solid var(--border-glow);
+  border-radius: 14px;
+  backdrop-filter: blur(24px);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.75), 0 0 0 1px rgba(79,195,247,0.07),
+              0 0 32px rgba(79,195,247,0.06);
+  padding: 0 14px 14px;
+  user-select: none;
+  cursor: default;
+  animation: cjcard-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#conjunction-card.hidden { display: none; }
+
+@keyframes cjcard-in {
+  from { opacity: 0; transform: scale(0.95) translateY(6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+/* Drag handle (top bar) */
+.cjcard-drag-handle {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+  user-select: none;
+}
+.cjcard-drag-handle:active { cursor: grabbing; }
+.cjcard-drag-handle span { flex: 1; }
+
+#cjcard-close-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text-muted);
+  cursor: pointer; transition: all 0.15s;
+}
+#cjcard-close-btn:hover { background: rgba(255,23,68,0.15); color: var(--red); border-color: var(--red); }
+
+/* PoC row */
+.cjcard-poc-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.cjcard-poc-badge {
+  font-family: var(--font-mono);
+  font-size: 12px; font-weight: 600;
+  padding: 2px 9px; border-radius: 6px;
+  border: 1px solid;          /* colour set inline */
+  letter-spacing: 0.02em;
+  background: rgba(0,0,0,0.25);
+}
+.cjcard-tier-label {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.09em;
+}
+.cjcard-cdmid {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px; color: var(--text-dim);
+}
+
+/* Satellite names */
+.cjcard-sats {
+  display: flex; align-items: center; gap: 5px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  white-space: nowrap; overflow: hidden;
+}
+.cjcard-sat { overflow: hidden; text-overflow: ellipsis; }
+.cjcard-sat.primary   { color: var(--text-primary); font-weight: 500; flex: 1; }
+.cjcard-sat.secondary { color: var(--text-muted); flex: 1; text-align: right; }
+.cjcard-vs-icon { flex-shrink: 0; color: var(--text-dim); }
+
+/* Stats (TCA + miss distance) */
+.cjcard-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  margin-bottom: 8px;
+}
+.cjcard-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-row); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 6px 8px;
+}
+.cjcard-stat-label {
+  font-size: 9px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.cjcard-stat-val {
+  font-family: var(--font-mono); font-size: 11px;
+  font-weight: 500; color: var(--text-primary);
+}
+.cjcard-tca { font-size: 9.5px; }
+
+/* Sigma row (σR σT σN) */
+.cjcard-sigma-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+}
+.cjcard-sigma {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-row); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 5px 7px;
+  align-items: center;
+}
+.cjcard-sigma-label {
+  font-size: 9px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.cjcard-sigma-val {
+  font-family: var(--font-mono); font-size: 10px;
+  font-weight: 500; color: var(--accent);
+}
+
