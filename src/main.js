@@ -39,7 +39,7 @@ import { initScene, startRenderLoop }                 from './viz/scene.js';
 import { createEarth }                                from './viz/earth.js';
 import { createCatalogueCloud, updateCataloguePositions, geoToWorld } from './viz/catalogue.js';
 import { createUncertaintyEllipsoid, orientEllipsoidRTN,
-         clearEllipsoids, pickEllipsoid }              from './viz/ellipsoid.js';
+         clearEllipsoids, pickEllipsoid, buildEllipsoidTooltip } from './viz/ellipsoid.js';
 import { pocToColor }                                 from './viz/riskColors.js';
 import { flyToConjunction, flyToPoint, resetCamera } from './viz/cameraControls.js';
 import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
@@ -491,7 +491,12 @@ onCDMUpdate(async (records, fetchedAt) => {
 // Alert panel
 initAlertPanel({
   onSelect(cdmRec) {
-    // Fly camera to conjunction midpoint
+    // 1. Show the detailed conjunction card in the center of the screen
+    const tip = buildEllipsoidTooltip(cdmRec);
+    const centerX = window.innerWidth / 2 - 150;
+    const centerY = window.innerHeight / 2 - 150;
+    showConjunctionCard(tip, centerX, centerY);
+    // 2. Fly camera to conjunction midpoint
     const n1  = String(cdmRec.SAT1_NORAD_CAT_ID ?? '');
     const n2  = String(cdmRec.SAT2_NORAD_CAT_ID ?? '');
     const p1  = _posMap.get(n1);

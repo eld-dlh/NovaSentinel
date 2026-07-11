@@ -53,7 +53,7 @@ const GROUP_URLS = {
   oneweb: `${CELESTRAK_BASE_URL}?GROUP=oneweb&FORMAT=tle`,
   iridium: `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
 
-  // ── Debris groups (OMM JSON format) ─────────────────────────────────────
+  // ── Debris groups (TLE format) ───────────────────────────────────────────
   // Each group corresponds to a major historic fragmentation event.
   // These use CELESTRAK_PROXY_BASE so requests go through the Vite /celestrak proxy,
   // avoiding CORS errors in the browser dev environment.
