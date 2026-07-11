@@ -81,12 +81,12 @@ function _buildRow(rec, index) {
   const poc     = parseFloat(rec.PC ?? 'NaN') || null;
   const tier    = pocToTier(poc);
   const color   = pocToCSS(poc);
-  const miss    = parseFloat(rec.MISS_DISTANCE ?? 'NaN');
+  const miss    = parseFloat(rec.MISS_DISTANCE ?? rec.MIN_RNG ?? 'NaN');
   const missStr = isFinite(miss) ? `${miss.toFixed(1)} km` : '—';
   const tca     = rec.TCA ? new Date(rec.TCA).toUTCString().replace('GMT', 'UTC') : '—';
   const pocStr  = poc != null ? poc.toExponential(2) : 'N/A';
-  const sat1    = rec.SAT1_OBJECT_NAME ?? rec.SAT1_OBJECT_DESIGNATOR ?? `#${rec.SAT1_NORAD_CAT_ID ?? '?'}`;
-  const sat2    = rec.SAT2_OBJECT_NAME ?? rec.SAT2_OBJECT_DESIGNATOR ?? `#${rec.SAT2_NORAD_CAT_ID ?? '?'}`;
+  const sat1    = rec.SAT1_OBJECT_NAME ?? rec.SAT_1_NAME ?? rec.SAT1_OBJECT_DESIGNATOR ?? `#${rec.SAT1_NORAD_CAT_ID ?? rec.SAT_1_ID ?? '?'}`;
+  const sat2    = rec.SAT2_OBJECT_NAME ?? rec.SAT_2_NAME ?? rec.SAT2_OBJECT_DESIGNATOR ?? `#${rec.SAT2_NORAD_CAT_ID ?? rec.SAT_2_ID ?? '?'}`;
 
   const row = document.createElement('div');
   row.className    = `alert-row tier-${tier.toLowerCase()}`;
