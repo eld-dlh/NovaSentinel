@@ -1,15 +1,26 @@
 import { defineConfig } from 'vite';
+import { resolve }      from 'path';
 
 export default defineConfig({
   server: {
+    cors: true,
+    origin: 'http://localhost:5173',
     proxy: {
       // All requests to /spacetrack/* are forwarded to space-track.org.
       // The browser only ever sees localhost — no CORS issue.
       '/spacetrack': {
-        target:      'https://www.space-track.org',
-        changeOrigin: true,                   // sets Host header to space-track.org
-        secure:       true,                   // enforce HTTPS on the target
+        target:       'https://www.space-track.org',
+        changeOrigin: true,
+        secure:       true,
         rewrite:      path => path.replace(/^\/spacetrack/, ''),
+      },
+      // All requests to /celestrak/* are forwarded to celestrak.org.
+      // Required because CelesTrak does not send CORS headers for browser fetches.
+      '/celestrak': {
+        target:       'https://celestrak.org',
+        changeOrigin: true,
+        secure:       true,
+        rewrite:      path => path.replace(/^\/celestrak/, ''),
       },
     },
   },
@@ -20,10 +31,10 @@ export default defineConfig({
     format: 'es',
   },
 
-  // Ensure satellite.js is pre-bundled for the main thread but not
-  // double-bundled inside Workers (Vite handles Worker deps separately).
+  // Ensure satellite.js, TensorFlow.js, Three.js, and Brain.js are pre-bundled
+  // for the main thread but not double-bundled inside Workers.
   optimizeDeps: {
-    include: ['satellite.js', 'three'],
+    include: ['satellite.js', 'three', '@tensorflow/tfjs', 'brain.js'],
   },
 
   build: {

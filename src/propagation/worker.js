@@ -24,7 +24,7 @@ import * as satellite from 'satellite.js';
 // State
 // ---------------------------------------------------------------------------
 
-/** @type {Map<string, object>} NORAD ID → satrec */
+/** @type {Map<string, { satrec: object, objectType: string }>} NORAD ID → { satrec, objectType } */
 const _satrecs = new Map();
 
 // ---------------------------------------------------------------------------
@@ -65,14 +65,14 @@ function handleInit(tles) {
 
   const errors = [];
 
-  for (const { noradId, line1, line2 } of tles) {
+  for (const { noradId, line1, line2, objectType } of tles) {
     try {
       const satrec = satellite.twoline2satrec(line1, line2);
       if (satrec.error !== 0) {
         errors.push(`NORAD ${noradId}: SGP4 init error ${satrec.error}`);
         continue;
       }
-      _satrecs.set(String(noradId), satrec);
+      _satrecs.set(String(noradId), { satrec, objectType: objectType ?? '' });
     } catch (e) {
       errors.push(`NORAD ${noradId}: ${e.message}`);
     }
@@ -94,7 +94,7 @@ function handleUpdate(tles) {
   let updated = 0;
   const errors = [];
 
-  for (const { noradId, line1, line2 } of tles) {
+  for (const { noradId, line1, line2, objectType } of tles) {
     try {
       const satrec = satellite.twoline2satrec(line1, line2);
       if (satrec.error !== 0) {
@@ -106,7 +106,7 @@ function handleUpdate(tles) {
       } else {
         added++;
       }
-      _satrecs.set(String(noradId), satrec);
+      _satrecs.set(String(noradId), { satrec, objectType: objectType ?? '' });
     } catch (e) {
       errors.push(`NORAD ${noradId}: ${e.message}`);
     }
@@ -135,14 +135,15 @@ function handlePropagate(timeMs) {
   const date = new Date(timeMs);
   const gmst = satellite.gstime(date);
 
-  const ids    = [];
-  const errors = [];
+  const ids         = [];
+  const objectTypes = [];   // parallel array — carries debris/payload type per id
+  const errors      = [];
 
   // Pre-allocate output buffer (may be slightly oversized if some fail)
   const buffer = new Float64Array(_satrecs.size * STRIDE);
   let   writeIdx = 0;
 
-  for (const [noradId, satrec] of _satrecs) {
+  for (const [noradId, { satrec, objectType }] of _satrecs) {
     const pv = satellite.propagate(satrec, date);
 
     if (!pv.position || pv.position === false) {
@@ -170,6 +171,7 @@ function handlePropagate(timeMs) {
     buffer[base + 6] = pv.position.z;
 
     ids.push(noradId);
+    objectTypes.push(objectType);
     writeIdx++;
   }
 
@@ -177,7 +179,7 @@ function handlePropagate(timeMs) {
   const trimmed = buffer.slice(0, writeIdx * STRIDE);
 
   self.postMessage(
-    { type: 'POSITIONS', data: trimmed.buffer, ids, errors, time: timeMs },
+    { type: 'POSITIONS', data: trimmed.buffer, ids, objectTypes, errors, time: timeMs },
     [trimmed.buffer]   // transferable — avoids structured clone overhead
   );
 }

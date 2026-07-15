@@ -1,6 +1,59 @@
+# Dependency directories
 node_modules/
+/dist
+/build
 
-# Environment variables — NEVER commit credentials
+# Logs and databases
+*.log
+*.sqlite3
+db.sqlite3
+
+# Environment configurations (NEVER commit credentials)
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env.*.local
+.env.local.php
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Python Caches & Virtual Environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing & Coverage Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.nyc_output/
+coverage/
+
+# Django media and static collected directories (only keep in dev)
+staticfiles/
+media/
+

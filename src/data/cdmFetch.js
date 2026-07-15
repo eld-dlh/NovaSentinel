@@ -28,11 +28,18 @@
 // Constants
 // ---------------------------------------------------------------------------
 
-// Use relative /spacetrack/* paths so the Vite dev proxy intercepts them.
-// This avoids CORS — the browser only talks to localhost, never space-track.org directly.
-const SPACETRACK_BASE  = '/spacetrack/basicspacedata/query';
-const SPACETRACK_LOGIN = '/spacetrack/ajaxauth/login';
+// When served by Django, window.NOVA_CONFIG.cdmEndpoint points to the Django
+// proxy view (/api/cdm/) which authenticates server-side.  Under Vite dev
+// we keep the old /spacetrack/* paths (handled by vite.config.js proxy).
+const _cfg              = (typeof window !== 'undefined' && window.NOVA_CONFIG) || {};
+const SPACETRACK_BASE  = '/spacetrack/basicspacedata/query';  // Vite dev fallback
+const SPACETRACK_LOGIN = _cfg.spacetrackLogin || '/spacetrack/ajaxauth/login';
 const CDM_CLASS        = 'cdm_public';
+
+// Django API endpoints (used when NOVA_CONFIG is injected by the template)
+const DJANGO_CDM_URL            = _cfg.cdmEndpoint      || null;
+const DJANGO_LOG_REJECTED_URL   = _cfg.logRejectedTle   || null;
+const DJANGO_LOG_CONJUNCTION_URL = _cfg.logConjunction  || null;
 
 /** Default minimum PoC — filters negligible conjunctions client-side */
 const DEFAULT_MIN_POC = 1e-6;
@@ -207,6 +214,10 @@ async function _doFetch(url) {
  * @returns {Promise<Object[]>}
  */
 export async function fetchConstellationCDMs(opts = {}) {
+  // If we're running under Django, use the server-side proxy endpoint directly
+  if (DJANGO_CDM_URL) {
+    return _doFetch(DJANGO_CDM_URL);
+  }
   const url = buildConstellationUrl(opts);
   return _doFetch(url);
 }
@@ -271,8 +282,59 @@ export async function loginSpaceTrack(identity, password) {
 }
 
 // ---------------------------------------------------------------------------
-// Cache fallback
+// Django audit log helpers (Module 5 — jQuery + AJAX bridge)
 // ---------------------------------------------------------------------------
+
+/**
+ * Posts a TLE rejection record to the Django audit log endpoint.
+ * Uses jQuery $.ajax when available (satisfies Module 5), otherwise fetch.
+ *
+ * @param {{ noradId: string, name?: string, reason: string, line1?: string, line2?: string }} entry
+ */
+export function postRejectionToDjango(entry) {
+  if (!DJANGO_LOG_REJECTED_URL) return;   // no Django — silently skip
+  const payload = JSON.stringify(entry);
+  if (typeof jQuery !== 'undefined') {
+    jQuery.ajax({
+      url:         DJANGO_LOG_REJECTED_URL,
+      method:      'POST',
+      contentType: 'application/json',
+      data:        payload,
+      error(xhr)   { console.warn('[cdmFetch] Django audit log error:', xhr.status); },
+    });
+  } else {
+    fetch(DJANGO_LOG_REJECTED_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    payload,
+    }).catch(err => console.warn('[cdmFetch] Django audit log fetch error:', err.message));
+  }
+}
+
+/**
+ * Posts a scored conjunction event to the Django audit log endpoint.
+ *
+ * @param {Object} alert  — shaped like the ConjunctionAlert model fields.
+ */
+export function postConjunctionToDjango(alert) {
+  if (!DJANGO_LOG_CONJUNCTION_URL) return;
+  const payload = JSON.stringify(alert);
+  if (typeof jQuery !== 'undefined') {
+    jQuery.ajax({
+      url:         DJANGO_LOG_CONJUNCTION_URL,
+      method:      'POST',
+      contentType: 'application/json',
+      data:        payload,
+      error(xhr)   { console.warn('[cdmFetch] Django conjunction log error:', xhr.status); },
+    });
+  } else {
+    fetch(DJANGO_LOG_CONJUNCTION_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    payload,
+    }).catch(err => console.warn('[cdmFetch] Django conjunction log fetch error:', err.message));
+  }
+}
 
 function _useCDMFallback(reason) {
   if (_cache.records.length > 0) {

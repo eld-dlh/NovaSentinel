@@ -2,9 +2,16 @@
   "name": "novasentinel",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "vite build",
+    "generate-data": "node scripts/fetchRealCDMs.js",
+    "train": "node scripts/trainModel.js",
+    "train-decay": "node scripts/trainDecayModel.js",
+    "test": "node --test tests/tleValidator.test.js && node --test tests/cdmCovariance.test.js && node --test tests/inference.test.js && node --test tests/pipeline.test.js",
+    "test:watch": "node --test --watch tests/"
   },
   "repository": {
     "type": "git",
@@ -21,6 +28,8 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "brain.js": "^2.0.0-beta.23",
     "satellite.js": "^7.0.0",
     "three": "^0.184.0"
   }

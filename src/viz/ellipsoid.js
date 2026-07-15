@@ -39,14 +39,19 @@ const _materialCache = new Map();
 function getEllipsoidMaterial(poc) {
   const tier = pocToTier(poc);
   if (!_materialCache.has(tier)) {
+    const col = pocToColor(poc);
+    // Very low opacity so the Earth globe remains visible through the ellipsoids.
+    // Use DoubleSide + depthWrite:false to avoid Z-fighting artefacts.
+    const baseOpacity = { GREEN: 0.04, AMBER: 0.07, RED: 0.12, UNKNOWN: 0.03 }[tier] ?? 0.04;
     _materialCache.set(tier, new THREE.MeshPhongMaterial({
-      color:       pocToColor(poc),
-      emissive:    pocToColor(poc),
-      emissiveIntensity: 0.3,
+      color: col,
+      emissive: col,
+      emissiveIntensity: 0.6,     // glow-like look without brightness overdose
       transparent: true,
-      opacity:     pocToOpacity(poc),
-      side:        THREE.FrontSide,
-      depthWrite:  false,           // prevent z-fighting with satellite dots
+      opacity: baseOpacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,   // prevent z-fighting with satellite dots
+      wireframe: false,
     }));
   }
   return _materialCache.get(tier);
@@ -98,8 +103,8 @@ export function createUncertaintyEllipsoid(axes, poc = null) {
 
   // Tag with metadata for raycasting / tooltip lookup
   mesh.userData.isEllipsoid = true;
-  mesh.userData.poc         = poc;
-  mesh.userData.semiAxesM   = axes;
+  mesh.userData.poc = poc;
+  mesh.userData.semiAxesM = axes;
 
   return mesh;
 }
@@ -142,7 +147,7 @@ export function orientEllipsoidRTN(mesh, posECI, velECI) {
  * @param {Object}     cdmRecord  - Raw CDM JSON record.
  */
 export function updateEllipsoidFromCDM(mesh, cdmRecord) {
-  const poc  = parseFloat(cdmRecord.PC ?? 'NaN') || null;
+  const poc = parseFloat(cdmRecord.PC ?? 'NaN') || null;
   const { axes } = cdmToEllipsoidAxes(cdmRecord);
 
   // Re-scale
@@ -157,7 +162,7 @@ export function updateEllipsoidFromCDM(mesh, cdmRecord) {
   mesh.material = getEllipsoidMaterial(poc).clone();
 
   // Update metadata
-  mesh.userData.poc       = poc;
+  mesh.userData.poc = poc;
   mesh.userData.semiAxesM = axes;
 }
 
@@ -186,31 +191,58 @@ export function updateEllipsoidFromCDM(mesh, cdmRecord) {
  * }}
  */
 export function buildEllipsoidTooltip(cdmRecord) {
-  const poc     = parseFloat(cdmRecord.PC ?? 'NaN') || null;
+  const poc = parseFloat(cdmRecord.PC ?? 'NaN') || null;
   const summary = covarianceSummary(cdmRecord);
 
+  // ── One-time debug: print ALL fields of the first CDM record so we can
+  //    confirm the exact field names Space-Track returns.
+  if (!buildEllipsoidTooltip._logged) {
+    buildEllipsoidTooltip._logged = true;
+    console.group('[NovaSentinel] CDM record field dump (first record)');
+    Object.entries(cdmRecord).forEach(([k, v]) => console.log(`  ${k}: ${v}`));
+    console.groupEnd();
+  }
+
+  // Confirmed Space-Track cdm_public field names (from live console dump):
+  //   NORAD IDs:  SAT_1_ID / SAT_2_ID
+  //   Names:      SAT_1_NAME / SAT_2_NAME
+  //   Types:      SAT1_OBJECT_TYPE / SAT2_OBJECT_TYPE  (no underscore — inconsistent API)
+  const sat1Name = cdmRecord.SAT_1_NAME ?? cdmRecord.SAT1_CATALOG_NAME ?? cdmRecord.SAT1_OBJECT_NAME ?? '—';
+  const sat2Name = cdmRecord.SAT_2_NAME ?? cdmRecord.SAT2_CATALOG_NAME ?? cdmRecord.SAT2_OBJECT_NAME ?? '—';
+  const sat1Id   = cdmRecord.SAT_1_ID   ?? cdmRecord.SAT1_OBJECT ?? cdmRecord.SAT1_NORAD_CAT_ID ?? null;
+  const sat2Id   = cdmRecord.SAT_2_ID   ?? cdmRecord.SAT2_OBJECT ?? cdmRecord.SAT2_NORAD_CAT_ID ?? null;
+
+  // Designators as visible fallback when NORAD IDs are absent
+  const sat1Designator = cdmRecord.SAT1_OBJECT_DESIGNATOR ?? null;
+  const sat2Designator = cdmRecord.SAT2_OBJECT_DESIGNATOR ?? null;
+
   return {
-    cdmId:        cdmRecord.CDM_ID         ?? '—',
-    tca:          cdmRecord.TCA            ?? '—',
-    poc:          poc,
+    cdmId: cdmRecord.CDM_ID ?? '—',
+    tca: cdmRecord.TCA ?? '—',
+    poc: poc,
     pocFormatted: poc != null ? poc.toExponential(2) : 'N/A',
-    tier:         pocToTier(poc),
-    tierColor:    pocToCSS(poc),
-    missDistM:    parseFloat(cdmRecord.MISS_DISTANCE ?? 'NaN'),
-    sat1Name:     cdmRecord.SAT1_OBJECT_NAME ?? cdmRecord.SAT1_OBJECT_DESIGNATOR ?? '—',
-    sat2Name:     cdmRecord.SAT2_OBJECT_NAME ?? cdmRecord.SAT2_OBJECT_DESIGNATOR ?? '—',
-    sigmaR:       summary.sigmaR,
-    sigmaT:       summary.sigmaT,
-    sigmaN:       summary.sigmaN,
+    tier: pocToTier(poc),
+    tierColor: pocToCSS(poc),
+    missDistM: parseFloat(cdmRecord.MISS_DISTANCE ?? cdmRecord.MIN_RNG ?? 'NaN'),
+    sat1Name,
+    sat2Name,
+    sat1Id: sat1Id != null ? String(sat1Id) : null,
+    sat2Id: sat2Id != null ? String(sat2Id) : null,
+    sat1Designator,
+    sat2Designator,
+    sigmaR: summary.sigmaR,
+    sigmaT: summary.sigmaT,
+    sigmaN: summary.sigmaN,
   };
 }
+
 
 // ---------------------------------------------------------------------------
 // Raycasting helper — pick ellipsoid under mouse
 // ---------------------------------------------------------------------------
 
 const _raycaster = new THREE.Raycaster();
-const _mouse     = new THREE.Vector2();
+const _mouse = new THREE.Vector2();
 
 /**
  * Tests a mouse event against a list of ellipsoid meshes and returns the
@@ -226,8 +258,8 @@ const _mouse     = new THREE.Vector2();
 export function pickEllipsoid(event, ellipsoids, camera, canvas, cdmRecords) {
   const rect = canvas.getBoundingClientRect();
   _mouse.set(
-    ((event.clientX - rect.left) / rect.width)  *  2 - 1,
-    ((event.clientY - rect.top)  / rect.height) * -2 + 1,
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    ((event.clientY - rect.top) / rect.height) * -2 + 1,
   );
 
   _raycaster.setFromCamera(_mouse, camera);
@@ -235,9 +267,9 @@ export function pickEllipsoid(event, ellipsoids, camera, canvas, cdmRecords) {
 
   if (hits.length === 0) return null;
 
-  const mesh  = hits[0].object;
-  const idx   = ellipsoids.indexOf(mesh);
-  const cdm   = cdmRecords[idx];
+  const mesh = hits[0].object;
+  const idx = ellipsoids.indexOf(mesh);
+  const cdm = cdmRecords[idx];
 
   return {
     mesh,

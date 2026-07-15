@@ -1,0 +1,79 @@
+name: NovaSentinel CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write   # needed for gh-pages push
+  pages:    write
+  id-token: write
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────
+  test:
+    name: Integration Tests (Node 20)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TLE validator tests
+        run: node --test tests/tleValidator.test.js
+
+      - name: Run CDM covariance tests
+        run: node --test tests/cdmCovariance.test.js
+
+      - name: Run ML inference / feature tests
+        run: node --test tests/inference.test.js
+
+      - name: Run full pipeline integration tests
+        run: node --test tests/pipeline.test.js
+
+  # ────────────────────────────────────────────────────────────────────────
+  build-and-deploy:
+    name: Build & Deploy to GitHub Pages
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vite production build
+        run: npm run build
+        env:
+          # These are PUBLIC env vars — safe to expose in the bundle.
+          # Space-Track credentials are NEVER stored here; users supply
+          # them at runtime via the UI login form or .env.local.
+          VITE_APP_VERSION: ${{ github.sha }}
+
+      - name: Deploy /dist to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir:  ./dist
+          publish_branch: gh-pages
+          commit_message: "deploy: ${{ github.sha }}"
+          # Ensure SPA routing works: all paths serve index.html
+          force_orphan: false

@@ -1,93 +1,891 @@
-// App entry — wires all modules together
+// NovaSentinel — application entry point
 //
-// Pipeline: TLE/OMM Fetch → Parse/Validate → SGP4 Propagation → Three.js Globe
+// Full pipeline:
+//   TLE Fetch  → SGP4 Propagation → Three.js Globe (point cloud)
+//   CDM Fetch  → ML PoC Inference → Alert Panel + CDM Ellipsoids
+//   TLE Decay  → Brain.js LSTM    → Reentry Alert Panel
 //
-// Data flow:
-//   1. CelesTrak TLE poll (6-hour interval) → tleParser → tleValidator
-//   2. Space-Track CDM poll (8-hour interval) → cdmFetch → risk engine
-//   3. Batch propagator (30-second SGP4 cycle) → lat/lon/alt → point cloud
-//
-// The propagation runs in a Web Worker to keep the Three.js render loop at 60 fps.
+// Architecture:
+//   - Three.js render loop: 60 fps via requestAnimationFrame
+//   - SGP4 propagation:     Web Worker (30-second cycle)
+//   - TLE polling:          6-hour interval (CelesTrak)
+//   - CDM polling:          8-hour interval (Space-Track)
+//   - Brain.js training:    setTimeout (deferred after TLE load)
 
-import { loginSpaceTrack, startNormalPolling, onCDMUpdate } from './data/cdmFetch.js';
-import { startTLEPolling, onTLEUpdate }                     from './data/tleFetch.js';
-import { createPropagator }                                  from './propagation/index.js';
+import './style.css';
 
-// ---------------------------------------------------------------------------
-// Propagator instance (Web Worker–backed, 30-second refresh)
-// ---------------------------------------------------------------------------
+// ── Data layer ────────────────────────────────────────────────────────────
+import { startTLEPolling, onTLEUpdate, fetchAllDebris, getCachedDebris } from './data/tleFetch.js';
+import { loginSpaceTrack, startNormalPolling,
+         onCDMUpdate,
+         postRejectionToDjango,
+         postConjunctionToDjango }                    from './data/cdmFetch.js';
+import { cdmToEllipsoidAxes }                         from './data/cdmCovariance.js';
+
+// ── Propagation ───────────────────────────────────────────────────────────
+import { createPropagator }                           from './propagation/index.js';
+
+// ── ML (TF.js PoC model) ──────────────────────────────────────────────────
+import { loadModel, batchInferPoC, disposeModel,
+         buildFeatureVector }                         from './ml/index.js';
+
+// ── Brain.js LSTM decay model ─────────────────────────────────────────────
+import { buildDecaySequences, trainDecayModel,
+         predictDecay, detectReentryThreats,
+         REENTRY_SEVERITY }                           from './decay/index.js';
+
+// ── Three.js visualisation ────────────────────────────────────────────────
+import { initScene, startRenderLoop }                 from './viz/scene.js';
+import { createEarth }                                from './viz/earth.js';
+import { createCatalogueCloud, updateCataloguePositions, geoToWorld } from './viz/catalogue.js';
+import { createUncertaintyEllipsoid, orientEllipsoidRTN,
+         clearEllipsoids, pickEllipsoid, buildEllipsoidTooltip } from './viz/ellipsoid.js';
+import { pocToColor, POC_THRESHOLDS }                 from './viz/riskColors.js';
+import { flyToConjunction, flyToPoint, resetCamera } from './viz/cameraControls.js';
+import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
+import * as THREE                                     from 'three';
+
+// ── UI ────────────────────────────────────────────────────────────────────
+import { initAlertPanel, updateAlertPanel }           from './ui/alertPanel.js';
+import { initDecayPanel, updateDecayPanel }           from './ui/decayPanel.js';
+import { initTooltip, registerTooltipData }           from './ui/objectTooltip.js';
+import { initSearch, updateSearchData }               from './ui/searchPanel.js';
+import { showConjunctionCard, hideConjunctionCard }   from './ui/conjunctionCard.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. Bootstrap Three.js scene
+// ═══════════════════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('globe-canvas');
+const ctx    = initScene(canvas);
+const { renderer, scene, camera, controls } = ctx;
+
+// Earth globe + atmosphere
+const earth = createEarth(scene);
+
+// Satellite point cloud (up to 12k objects)
+// pointSize removed — per-satellite sizes now set via sizeBuf in updateCataloguePositions()
+const cloud = createCatalogueCloud(scene, {
+  maxObjects:   30_000,
+  defaultColor: new THREE.Color(0x4fc3f7),
+});
+
+// Group for CDM ellipsoids
+const ellipsoidGroup = new THREE.Group();
+ellipsoidGroup.name  = 'ellipsoids';
+scene.add(ellipsoidGroup);
+
+// Orbit path for the selected satellite
+const orbitLine = createOrbitLine();
+scene.add(orbitLine);
+
+// ── State ────────────────────────────────────────────────────────────────
+let _pocMap      = new Map();  // noradId → PoC score
+let _tleMap      = new Map();  // noradId → TLERecord
+let _posMap      = new Map();  // noradId → CachedPosition (live reference from propagator)
+let _cdmRecords  = [];
+let _ellipsoids  = [];         // THREE.Mesh[] parallel to _cdmRecords
+let _showEllipsoids = true;
+let _pocModel    = null;
+let _selectedNoradId = null;
+let _followCamera    = false;  // camera-follow mode
+let _cdmFieldsDumped = false;  // one-time debug flag — logs CDM field names on first update
+// Dedicated CDM satellite index — never cleared, always passed to search.
+// Ensures conjunction satellites are searchable even when not in TLE catalogue.
+const _cdmSatMap = new Map();  // noradId(string) → stub {noradId, name, objectType, isVirtual}
+
+
+// ── Colour palette per object type ──────────────────────────────────────────
+const COLOR_PAYLOAD  = new THREE.Color(0x4fc3f7);   // cyan-blue  — active satellites
+const COLOR_DEBRIS   = new THREE.Color(0xffa040);   // vivid orange — debris
+const COLOR_ROCKET   = new THREE.Color(0xb39ddb);   // soft purple — rocket bodies
+const COLOR_UNKNOWN  = new THREE.Color(0x78909c);   // blue-grey  — unclassified
+
+// ── Colour function for updateCataloguePositions ─────────────────────────
+function satelliteColor(pos, noradId) {
+  if (_selectedNoradId != null) {
+    if (noradId !== _selectedNoradId) {
+      // Dimmed color: let's get the base color and scale it down
+      let base;
+      const poc = _pocMap.get(noradId) ?? null;
+      if (poc != null && poc >= POC_THRESHOLDS.GREEN_LIMIT) {
+        base = pocToColor(poc);
+      } else {
+        const type = (pos.objectType ?? '').toUpperCase();
+        if (type.includes('DEBRIS'))  base = COLOR_DEBRIS;
+        else if (type.includes('ROCKET'))  base = COLOR_ROCKET;
+        else if (type.includes('PAYLOAD')) base = COLOR_PAYLOAD;
+        else {
+          const alt = pos.altKm ?? 400;
+          const t   = Math.max(0, Math.min(1, (alt - 200) / 1800));
+          base = new THREE.Color().setHSL(0.56 + t * 0.08, 0.85, 0.50 + t * 0.08);
+        }
+      }
+      return base.clone().multiplyScalar(0.12);
+    } else {
+      // Selected satellite: return yellow highlight color
+      return new THREE.Color(0xffea00);
+    }
+  }
+
+  // 1. PoC-flagged objects override type colour with risk colour.
+  // Only apply when poc is at or above the GREEN threshold (≥1e-4) so that
+  // sub-threshold CDM-touched debris objects keep their orange type colour
+  // instead of being painted vivid red.
+  const poc = _pocMap.get(noradId) ?? null;
+  if (poc != null && poc >= POC_THRESHOLDS.GREEN_LIMIT) return pocToColor(poc);
+
+  // 2. Colour by object type for quick visual differentiation
+  const type = (pos.objectType ?? '').toUpperCase();
+  if (type.includes('DEBRIS'))  return COLOR_DEBRIS;
+  if (type.includes('ROCKET'))  return COLOR_ROCKET;
+  if (type.includes('PAYLOAD')) return COLOR_PAYLOAD;
+
+  // 3. Altitude-tinted fallback for unknown types (lower = warmer)
+  const alt = pos.altKm ?? 400;
+  const t   = Math.max(0, Math.min(1, (alt - 200) / 1800));
+  return new THREE.Color().setHSL(0.56 + t * 0.08, 0.85, 0.50 + t * 0.08);
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────
+const stopLoop = startRenderLoop(ctx, (dt) => {
+  earth.tick(dt);  // slow Earth rotation
+
+  // Real-time selected satellite visual pulse!
+  if (_selectedNoradId != null) {
+    const idx = cloud.indexMap.get(_selectedNoradId);
+    if (idx != null) {
+      const base = idx * 3;
+      const pulse = 0.85 + 0.15 * Math.sin(performance.now() * 0.009);
+      const color = new THREE.Color(0xffea00).multiplyScalar(pulse);
+      cloud.colorBuf[base]     = color.r;
+      cloud.colorBuf[base + 1] = color.g;
+      cloud.colorBuf[base + 2] = color.b;
+      cloud.geometry.attributes.color.needsUpdate = true;
+
+      const sizePulse = 9.0 + 3.0 * Math.sin(performance.now() * 0.009);
+      cloud.sizeBuf[idx] = sizePulse;
+      cloud.geometry.attributes.size.needsUpdate = true;
+    }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. Propagation pipeline
+// ═══════════════════════════════════════════════════════════════════════════
 
 const propagator = createPropagator({
   intervalMs: 30_000,
-  useWorker:  typeof Worker !== 'undefined',
+  useWorker:  typeof Worker !== 'undefined' && !import.meta.env.DEV,
   onError(errors) {
-    if (errors.length > 0) {
-      console.warn(`[main] ${errors.length} propagation errors this cycle`);
+    if (errors.length > 0)
+      console.warn(`[main] ${errors.length} propagation errors`);
+  },
+});
+
+propagator.start((positionMap) => {
+  _posMap = positionMap;
+
+  updateCataloguePositions(cloud, positionMap, {
+    colorFn: satelliteColor,
+    selectedNoradId: _selectedNoradId,
+  });
+
+  // Keep search panel position data live
+  updateSearchData(_tleMap, _pocMap, _posMap);
+
+  // Live-update the tracking card if a satellite is selected
+  if (_selectedNoradId) {
+    const pos = positionMap.get(_selectedNoradId);
+    if (pos) {
+      // Refresh the orbit path with current epoch
+      const record = _tleMap.get(_selectedNoradId);
+      if (record?.satrec) updateOrbitLineGeometry(orbitLine, record.satrec, new Date());
+
+      // Dispatch live data to update the result card fields
+      document.dispatchEvent(new CustomEvent('novasentinel:track-update', {
+        detail: {
+          noradId: _selectedNoradId,
+          altKm:   pos.altKm,
+          speed:   pos.speed,
+          lat:     pos.lat,
+          lon:     pos.lon,
+        }
+      }));
+
+      // Camera follow mode — smoothly nudge camera toward new satellite position
+      if (_followCamera && pos.lat != null) {
+        const satWorldObj = geoToWorld(pos.lat, pos.lon, pos.altKm, 1);
+        const satWorld = new THREE.Vector3(satWorldObj.x, satWorldObj.y, satWorldObj.z);
+        // Gently slide the orbit controls target toward the satellite
+        controls.target.lerp(satWorld, 0.08);
+        controls.update();
+      }
+    }
+  }
+
+  // Update header stat
+  const statEl = document.getElementById('stat-objects');
+  if (statEl) statEl.textContent = positionMap.size.toLocaleString();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. TLE polling → load propagator + decay model
+// ═══════════════════════════════════════════════════════════════════════════
+
+onTLEUpdate((records, fetchedAt) => {
+  console.info(`[main] TLE update — ${records.length} objects @ ${fetchedAt?.toISOString()}`);
+
+  // Build NORAD → record lookup for tooltip
+  _tleMap.clear();
+  for (const r of records) _tleMap.set(r.noradId, r);
+
+  // Register with tooltip picker
+  registerTooltipData(cloud, _tleMap, _pocMap);
+
+  // Update search panel with fresh TLE catalogue
+  updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
+
+  // Load into propagator (active satellites first)
+  propagator.load(records);
+
+  // ── Instant debris hydration from localStorage ────────────────────────────
+  // getCachedDebris() is synchronous and zero-network. It immediately adds
+  // debris to the propagator so dots appear on the globe without waiting for
+  // the background fetch below. The background fetch (5 s delay) will refresh
+  // the cache silently for the next session.
+  const cachedDebris = getCachedDebris();
+  if (cachedDebris.length > 0) {
+    for (const r of cachedDebris) _tleMap.set(r.noradId, r);
+    propagator.update(cachedDebris);
+    console.info(`[main] ⚡ ${cachedDebris.length} debris objects loaded from cache (instant)`);
+  }
+
+  // Hide loading overlay on first TLE load
+  const overlay = document.getElementById('loading-overlay');
+  if (overlay) overlay.classList.add('hidden');
+
+  // Status dot → online
+  const dot = document.getElementById('status-dot');
+  if (dot) { dot.classList.add('online'); dot.setAttribute('aria-label', 'Status: online'); }
+
+  // Update header timestamp
+  const tsEl = document.getElementById('stat-updated');
+  if (tsEl && fetchedAt) tsEl.textContent = fetchedAt.toUTCString().slice(17, 25) + ' UTC';
+
+  // Defer Brain.js LSTM — give Three.js several frames before blocking the thread
+  setTimeout(() => _runDecayPipeline(records), 500);
+});
+
+startTLEPolling({
+  group: 'active', maxAgeDays: 30,
+  // auditLog array: every rejected TLE entry is forwarded to the Django DB
+  auditLog: {
+    push(entry) {
+      postRejectionToDjango({
+        noradId: entry.noradId,
+        name:    entry.name,
+        reason:  entry.reason,
+      });
     }
   },
 });
 
-// ---------------------------------------------------------------------------
-// TLE catalogue → propagation pipeline
-// ---------------------------------------------------------------------------
+// ── Debris fetch — deferred background refresh ────────────────────────────
+// The globe is already populated from localStorage cache (above).
+// We wait 5 s before starting network fetches so the active-TLE download and
+// initial SGP4 propagation finish first without bandwidth/CPU contention.
+// On first ever load (no cache), debris appears after ~5-10 s total.
+setTimeout(() => {
+  fetchAllDebris({ includeDecaying: false }).then((debrisRecords) => {
+    if (debrisRecords.length === 0) {
+      console.warn('[main] fetchAllDebris returned 0 records — check CelesTrak connectivity');
+      return;
+    }
 
-// React to fresh TLE data — load into propagator (first fetch or refresh)
-onTLEUpdate((records, fetchedAt) => {
-  console.info(
-    `[main] TLE update — ${records.length} satellites as of ${fetchedAt?.toISOString()}`
-  );
+    // Merge into TLE map so tooltip + search panel can identify debris objects
+    for (const r of debrisRecords) _tleMap.set(r.noradId, r);
 
-  // Load the full catalogue into the propagator (Worker will build satrecs)
-  propagator.load(records);
+    // Incrementally add to propagator without wiping active-satellite satrecs
+    propagator.update(debrisRecords);
 
-  // Start (or restart) the 30-second propagation loop
-  propagator.start((positionMap) => {
-    console.info(
-      `[main] Propagation cycle complete — ${positionMap.size} active positions`
-    );
+    // Update search data with the expanded catalogue
+    updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
 
-    // TODO: wire to Three.js point cloud via updateCataloguePositions()
-    // import { updateCataloguePositions } from './viz/catalogue.js';
-    // updateCataloguePositions(cloud, positionMap);
+    console.info(`[main] ✓ ${debrisRecords.length} debris objects refreshed from network`);
+  }).catch((err) => {
+    console.error('[main] fetchAllDebris failed:', err.message);
   });
-});
+}, 5_000);  // 5-second delay — lets active TLE load + first propagation complete first
 
-// Start CelesTrak TLE polling (immediate first fetch + 6-hour interval)
-startTLEPolling({ group: 'active', maxAgeDays: 30 });
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. Brain.js LSTM decay pipeline
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ---------------------------------------------------------------------------
-// Space-Track authentication + CDM polling bootstrap
-// ---------------------------------------------------------------------------
-// Credentials are loaded from .env (VITE_ prefix = exposed to Vite bundle).
-// Never hardcode credentials here — edit .env instead.
+let _decayNet = null;
 
-const identity = import.meta.env.VITE_SPACETRACK_IDENTITY;
-const password  = import.meta.env.VITE_SPACETRACK_PASSWORD;
+async function _runDecayPipeline(records) {
+  const loaderSub = document.getElementById('loader-sub');
+  if (loaderSub) loaderSub.textContent = 'Training decay model…';
 
-if (!identity || !password) {
-  console.error(
-    '[main] Space-Track credentials missing. ' +
-    'Add VITE_SPACETRACK_IDENTITY and VITE_SPACETRACK_PASSWORD to your .env file.'
+  // Cap at 200 sequences — training time is O(n × iterations), and LSTM
+  // generalises well from a representative subset for altitude-decay detection.
+  const sequences = buildDecaySequences(records, 10).slice(0, 200);
+  console.info(`[decay] ${sequences.length} sequences built (capped at 200)`);
+
+  if (sequences.length === 0) return;
+
+  // Yield one more frame so the globe is definitely rendered before the
+  // synchronous Brain.js training loop starts.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+
+  const { net, trainLog } = trainDecayModel(sequences, {
+    iterations: 200,   // reduced from 500 — converges in <1 s for 200 sequences
+    learningRate: 0.01,
+  });
+  _decayNet = net;
+
+  const { alerts } = detectReentryThreats(sequences, net, predictDecay, {
+    steps: 3, thresholdKm: 250,
+  });
+
+  // Update decay sidebar
+  updateDecayPanel(alerts);
+
+  // Dispatch for decayPanel listener
+  document.dispatchEvent(
+    new CustomEvent('novasentinel:decay-update', { detail: { alerts } })
   );
-} else {
-  const loggedIn = await loginSpaceTrack(identity, password);
 
-  if (loggedIn) {
-    // Register a global CDM update listener (wire to your UI/risk engine here)
-    onCDMUpdate((records, fetchedAt) => {
-      console.info(`[main] CDM update — ${records.length} records as of ${fetchedAt?.toISOString()}`);
-      // TODO: pass records to your risk predictor / visualisation layer
+  // Update header reentry stat
+  const rEl = document.getElementById('stat-reentry');
+  if (rEl) rEl.textContent = alerts.length > 0 ? `⚠ ${alerts.length}` : '0';
+
+  console.info(`[decay] ${alerts.length} reentry alerts | LSTM error=${trainLog.error?.toFixed(5) ?? 'N/A'}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. TF.js PoC model
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function _initMLModel() {
+  try {
+    _pocModel = await loadModel();
+    console.info('[main] PoC model loaded');
+  } catch (err) {
+    console.warn('[main] PoC model unavailable:', err.message);
+  }
+}
+_initMLModel();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. CDM polling → ellipsoids + alert panel
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _cdmToConjunction(cdm) {
+  return {
+    missDistanceKm:     parseFloat(cdm.MISS_DISTANCE ?? 0),
+    relVelocityKms:     parseFloat(cdm.RELATIVE_SPEED ?? 0),
+    mahalanobisDistance: cdm.MAHALANOBIS_DISTANCE ? parseFloat(cdm.MAHALANOBIS_DISTANCE) : null,
+    combinedCovBplane:  null,
+    incPrimaryDeg:      parseFloat(cdm.SAT1_INCLINATION ?? 0),
+    incSecondaryDeg:    parseFloat(cdm.SAT2_INCLINATION ?? 0),
+    raanDiffDeg:        Math.abs(parseFloat(cdm.SAT1_RAAN ?? 0) - parseFloat(cdm.SAT2_RAAN ?? 0)),
+    altPrimaryKm:       parseFloat(cdm.SAT1_ALTITUDE ?? 500),
+    altSecondaryKm:     parseFloat(cdm.SAT2_ALTITUDE ?? 500),
+    bstarPrimary:       parseFloat(cdm.SAT1_BSTAR ?? 0),
+    tleAgeDays:         cdm.TLE_AGE ? parseFloat(cdm.TLE_AGE) : 1,
+    isDebris:           (cdm.SAT2_OBJECT_TYPE ?? '').toUpperCase().includes('DEBRIS'),
+  };
+}
+
+async function _scoreCDMs(records) {
+  if (records.length === 0) return [];
+
+  // When the ML model is available use it to SUPPLEMENT missing PC values,
+  // but NEVER override an authoritative raw CDM PC from Space-Track.
+  // The raw PC is produced by the 18th SCS/LeoLabs conjunction analysis
+  // pipeline — it is always more accurate than our local ML model.
+  if (_pocModel) {
+    const conjs    = records.map(_cdmToConjunction);
+    const vectors  = conjs.map(buildFeatureVector);
+    const mlScores = await batchInferPoC(_pocModel, vectors);
+    return records.map((cdm, i) => {
+      const rawPC  = cdm.PC != null ? parseFloat(cdm.PC)  : NaN;
+      const mlScore = mlScores[i] ?? NaN;
+      // Prefer the authoritative raw CDM PC when available.
+      // Fall back to ML score only when PC is null/missing.
+      const pocScore = isFinite(rawPC)
+        ? rawPC
+        : (isFinite(mlScore) ? mlScore : null);
+      return { cdm, pocScore };
     });
+  }
 
-    // Start the 8-hour constellation sweep (Space-Track: 3 requests/day)
-    startNormalPolling();
+  // Fallback (no ML model): use the raw PC field from Space-Track CDM data so
+  // risk dots still appear on the globe even when the TF.js model hasn't loaded.
+  return records.map(cdm => ({
+    cdm,
+    pocScore: cdm.PC != null ? parseFloat(cdm.PC) : null,
+  })).filter(s => s.pocScore != null && !isNaN(s.pocScore));
+}
+
+
+function _rebuildEllipsoids(records) {
+  clearEllipsoids(ellipsoidGroup);
+  _ellipsoids = [];
+
+  for (const rec of records.slice(0, 50)) {  // cap at 50 for performance
+    try {
+      const poc  = parseFloat(rec.PC ?? 'NaN') || null;
+      const { axes } = cdmToEllipsoidAxes(rec);
+      const mesh = createUncertaintyEllipsoid(axes, poc);
+      mesh.visible = _showEllipsoids;
+
+      // Position at primary object's current location — SAT_1_ID is the
+      // confirmed Space-Track cdm_public field for the NORAD catalog number.
+      const norad = rec.SAT_1_ID ?? rec.SAT1_OBJECT ?? rec.SAT1_NORAD_CAT_ID;
+      const pos   = _posMap.get(String(norad));
+      if (pos) {
+        const world = new THREE.Vector3(pos.eciPos.x, pos.eciPos.y, pos.eciPos.z)
+          .multiplyScalar(1 / 6371);          // ECI km → scene units
+        mesh.position.copy(world);
+
+        if (pos.eciPos) {
+          // Approximate RTN orientation from radial direction
+          orientEllipsoidRTN(
+            mesh,
+            world,
+            new THREE.Vector3(0, 0.001, 0)   // placeholder velocity; real vel needs worker data
+          );
+        }
+      }
+
+      ellipsoidGroup.add(mesh);
+      _ellipsoids.push(mesh);
+    } catch (err) {
+      console.warn('[main] Ellipsoid build failed:', err.message);
+    }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Graceful shutdown
-// ---------------------------------------------------------------------------
+// ── Name-based NORAD lookup ──────────────────────────────────────────────────
+// cdm_public from Space-Track may not include a numeric NORAD ID field.
+// This searches the already-loaded TLE catalogue by satellite name so that
+// CDM satellites can still be risk-colored and found in the search bar.
+function _findNoradByName(targetName) {
+  if (!targetName) return null;
+  const upper = targetName.trim().toUpperCase();
+  for (const [id, rec] of _tleMap) {
+    if (!id.startsWith('CDM-') && rec.name) {
+      const rn = rec.name.trim().toUpperCase();
+      // Exact match OR the TLE name starts with the CDM name (e.g. TLE has
+      // "COSMOS 1741 DEB", CDM has "COSMOS 1741") — or vice versa.
+      if (rn === upper || rn.startsWith(upper) || upper.startsWith(rn)) {
+        return id;
+      }
+    }
+  }
+  return null;
+}
+
+onCDMUpdate(async (records, fetchedAt) => {
+  console.info(`[main] CDM update — ${records.length} records`);
+  _cdmRecords = records;
+
+  // ML scoring (falls back to raw CDM PC when model is unavailable)
+  const scored = await _scoreCDMs(records);
+  const scoredMap = new Map(scored.map(s => [s.cdm, s.pocScore]));
+
+  for (const cdm of records) {
+    // ── One-time field dump so we can confirm the real Space-Track field names
+    if (!_cdmFieldsDumped) {
+      _cdmFieldsDumped = true;
+      console.group('[NovaSentinel] CDM record keys (first record)');
+      Object.keys(cdm).forEach(k => console.log(` ${k}: ${JSON.stringify(cdm[k])}` ));
+      console.groupEnd();
+    }
+
+    // Confirmed Space-Track cdm_public field names (verified via console dump):
+    //   SAT_1_NAME / SAT_2_NAME  — satellite names
+    //   SAT_1_ID   / SAT_2_ID   — NORAD catalog numbers (numeric strings)
+    //   SAT1_OBJECT_TYPE / SAT2_OBJECT_TYPE — object types (no underscore!)
+    //   MIN_RNG — miss distance in metres
+    const name1 = cdm.SAT_1_NAME ?? cdm.SAT1_CATALOG_NAME ?? cdm.SAT1_OBJECT_NAME ?? '';
+    const name2 = cdm.SAT_2_NAME ?? cdm.SAT2_CATALOG_NAME ?? cdm.SAT2_OBJECT_NAME ?? '';
+
+    // SAT_1_ID is always numeric; fall back to name-match then synthetic key.
+    let id1Raw = cdm.SAT_1_ID ?? cdm.SAT1_OBJECT ?? cdm.SAT1_NORAD_CAT_ID ?? '';
+    let id2Raw = cdm.SAT_2_ID ?? cdm.SAT2_OBJECT ?? cdm.SAT2_NORAD_CAT_ID ?? '';
+
+    // Use the raw ID only if it looks like a number (a real NORAD cat ID)
+    let id1 = (String(id1Raw).trim() !== '' && !isNaN(Number(id1Raw)))
+      ? String(id1Raw).trim()
+      : (_findNoradByName(name1) ?? (name1 ? `CDM-${cdm.CDM_ID}-S1` : ''));
+    let id2 = (String(id2Raw).trim() !== '' && !isNaN(Number(id2Raw)))
+      ? String(id2Raw).trim()
+      : (_findNoradByName(name2) ?? (name2 ? `CDM-${cdm.CDM_ID}-S2` : ''));
+
+    // Always register in the dedicated CDM satellite index so the search panel
+    // can find these satellites regardless of the main TLE catalogue contents.
+    if (id1) {
+      _cdmSatMap.set(id1, {
+        noradId: id1,
+        name:    name1 || `SAT-${id1}`,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+    if (id2) {
+      _cdmSatMap.set(id2, {
+        noradId: id2,
+        name:    name2 || `DEBRIS-${id2}`,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+
+    // Also add virtual stubs to the main TLE map if not already present
+    // (so tooltip data is available for satellites not in the active catalogue)
+    if (id1 && !_tleMap.has(id1)) {
+      _tleMap.set(id1, {
+        noradId: id1,
+        name: name1 || `SAT-${id1}`,
+        inclination: parseFloat(cdm.SAT1_INCLINATION ?? 0),
+        eccentricity: 0,
+        meanMotion: 15,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+    if (id2 && !_tleMap.has(id2)) {
+      _tleMap.set(id2, {
+        noradId: id2,
+        name: name2 || `DEBRIS-${id2}`,
+        inclination: parseFloat(cdm.SAT2_INCLINATION ?? 0),
+        eccentricity: 0,
+        meanMotion: 15,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+
+    let pocScore = scoredMap.get(cdm) ?? null;
+
+    // Final fallback: derive a synthetic PoC from miss distance so that
+    // every conjunction always produces a visible risk dot on the globe,
+    // even when neither the ML model nor the CDM PC field is available.
+    if (pocScore == null || pocScore < 1e-6) {
+      // MIN_RNG is in metres in Space-Track cdm_public
+      const missM = parseFloat(cdm.MIN_RNG ?? cdm.MISS_DISTANCE ?? 0);
+      if      (missM > 0   && missM < 200)  pocScore = 1.5e-3;  // RED   — < 200 m
+      else if (missM >= 200 && missM < 5000) pocScore = 2e-4;   // AMBER — < 5 km
+      else if (missM >= 5000 && missM < 20000) pocScore = 1e-4; // GREEN — < 20 km
+    }
+
+    if (pocScore == null || pocScore < 1e-6) continue;
+
+    if (id1) _pocMap.set(id1, Math.max(_pocMap.get(id1) ?? 0, pocScore));
+    if (id2) _pocMap.set(id2, Math.max(_pocMap.get(id2) ?? 0, pocScore));
+
+    // Sync positions in _posMap so that camera fly-to / track can target them
+    const pos1 = _posMap.get(id1);
+    const pos2 = _posMap.get(id2);
+    if (pos1 && !pos2) {
+      _posMap.set(id2, {
+        ...pos1,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase()
+      });
+    } else if (pos2 && !pos1) {
+      _posMap.set(id1, {
+        ...pos2,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase()
+      });
+    }
+
+    // Persist to Django when PoC exceeds the minimum threshold (1e-6)
+    if (pocScore >= 1e-6) {
+      postConjunctionToDjango({
+        noradPrimary:   String(cdm.SAT_1_ID ?? ''),
+        namePrimary:    cdm.SAT_1_NAME ?? '',
+        noradSecondary: String(cdm.SAT_2_ID ?? ''),
+        nameSecondary:  cdm.SAT_2_NAME ?? '',
+        pocScore:       pocScore,
+        missDistance:   parseFloat(cdm.MIN_RNG ?? cdm.MISS_DISTANCE ?? 0),
+        relVelocity:    parseFloat(cdm.RELATIVE_SPEED ?? 0),
+        tca:            cdm.TCA ?? new Date().toISOString(),
+        isDebris:       (cdm.SAT2_OBJECT_TYPE ?? '').toUpperCase().includes('DEBRIS'),
+        cdmId:          cdm.CDM_ID ?? '',
+      });
+    }
+  }
+
+  // ── Immediately refresh GPU colour buffer so risk dots appear now, not
+  // in 30 s when the next propagation cycle fires.
+  if (_posMap.size > 0) {
+    updateCataloguePositions(cloud, _posMap, {
+      colorFn:        satelliteColor,
+      selectedNoradId: _selectedNoradId,
+    });
+    console.info(`[main] Risk colours applied — ${_pocMap.size} objects in pocMap`);
+  }
+
+  // Sync updated PoC scores to search panel (after all CDMs processed)
+  updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
+  console.info(`[main] CDM satellite index: ${_cdmSatMap.size} satellites registered`);
+
+  // Patch CDM records with ML PoC where CDM field is missing
+  const enriched = records.map(r => ({
+    ...r,
+    PC: r.PC ?? scored.find(s => s.cdm === r)?.pocScore?.toExponential(4) ?? null,
+  }));
+
+  updateAlertPanel(enriched);
+
+  // Update conjunction stat
+  const cEl = document.getElementById('stat-conjunctions');
+  if (cEl) cEl.textContent = records.length;
+
+  // Rebuild CDM ellipsoids
+  _rebuildEllipsoids(enriched);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. UI initialisation
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Alert panel
+initAlertPanel({
+  onSelect(cdmRec) {
+    // 1. Show the detailed conjunction card in the center of the screen
+    const tip = buildEllipsoidTooltip(cdmRec);
+    const centerX = window.innerWidth / 2 - 150;
+    const centerY = window.innerHeight / 2 - 150;
+    showConjunctionCard(tip, centerX, centerY);
+    // 2. Fly camera to conjunction midpoint
+    const n1  = String(cdmRec.SAT_1_ID ?? cdmRec.SAT1_OBJECT ?? '');
+    const n2  = String(cdmRec.SAT_2_ID ?? cdmRec.SAT2_OBJECT ?? '');
+    const p1  = _posMap.get(n1);
+    const p2  = _posMap.get(n2);
+    if (p1 && p2) {
+      const toScene = (p) => new THREE.Vector3(p.eciPos.x, p.eciPos.y, p.eciPos.z)
+        .multiplyScalar(1 / 6371);
+      flyToConjunction(camera, controls, toScene(p1), toScene(p2));
+    }
+  },
+  onEllipsoidToggle(visible) {
+    _showEllipsoids = visible;
+    _ellipsoids.forEach(m => { m.visible = visible; });
+  },
+});
+
+// Decay panel
+initDecayPanel();
+
+// Tooltip
+initTooltip(canvas, camera, _posMap);
+
+// ── Ellipsoid click handler ───────────────────────────────────────────────
+// Priority: satellite dots (handled inside objectTooltip.js click listener)
+// take precedence. We check for an ellipsoid hit only if there are ellipsoids
+// present and the objectTooltip raycaster does NOT return a satellite hit
+// at this click position. The satellite click fires its own CustomEvent so we
+// detect satellite priority by re-running the Points raycast inline.
+{
+  const _satRaycaster = new THREE.Raycaster();
+  const _satMouse     = new THREE.Vector2();
+  _satRaycaster.params.Points = { threshold: 0.006 };
+
+  canvas.addEventListener('click', (e) => {
+    // Guard: nothing to pick
+    if (_ellipsoids.length === 0) return;
+
+    // Check if a satellite dot sits under this click — dots take priority
+    const rect = canvas.getBoundingClientRect();
+    _satMouse.set(
+      ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((e.clientY - rect.top)  / rect.height) * -2 + 1,
+    );
+    _satRaycaster.setFromCamera(_satMouse, camera);
+    if (cloud?.points) {
+      const satHits = _satRaycaster.intersectObject(cloud.points, false);
+      if (satHits.length > 0) {
+        // A satellite dot was clicked — dismiss the card and let the
+        // objectTooltip handler deal with the satellite selection.
+        hideConjunctionCard();
+        return;
+      }
+    }
+
+    // Raycast against ellipsoid meshes
+    const hit = pickEllipsoid(e, _ellipsoids, camera, canvas, _cdmRecords);
+    if (!hit || !hit.tooltip) {
+      // Clicked empty space — dismiss card
+      hideConjunctionCard();
+      return;
+    }
+
+    showConjunctionCard(hit.tooltip, e.clientX, e.clientY);
+  });
+}
+
+// Search panel
+initSearch();
+
+// Reset camera button (guards against clicks before scene loads)
+document.getElementById('reset-camera-btn')?.addEventListener('click', () => {
+  if (camera && controls) {
+    resetCamera(camera, controls);
+  }
+});
+
+// ── Notification bell toggle ──────────────────────────────────────────────
+(function _initNotifBell() {
+  const btn       = document.getElementById('notif-btn');
+  const popup     = document.getElementById('notif-popup');
+  const inner     = document.getElementById('notif-popup-inner');
+  const decayEl   = document.getElementById('decay-panel');
+  const alertEl   = document.getElementById('alert-panel');
+  const badge     = document.getElementById('notif-badge');
+
+  if (!btn || !popup || !inner) return;
+
+  let open = false;
+
+  function _mount() {
+    if (decayEl) { decayEl.classList.remove('panel-hidden'); inner.appendChild(decayEl); }
+    if (alertEl) { alertEl.classList.remove('panel-hidden'); inner.appendChild(alertEl); }
+  }
+
+  function _unmount() {
+    if (decayEl) { document.body.appendChild(decayEl); decayEl.classList.add('panel-hidden'); }
+    if (alertEl) { document.body.appendChild(alertEl); alertEl.classList.add('panel-hidden'); }
+  }
+
+  btn.addEventListener('click', () => {
+    open = !open;
+    if (open) {
+      _mount();
+      popup.classList.remove('hidden');
+      btn.classList.add('active');
+    } else {
+      _unmount();
+      popup.classList.add('hidden');
+      btn.classList.remove('active');
+    }
+  });
+
+  // Update badge count from decay alerts
+  document.addEventListener('novasentinel:decay-update', (e) => {
+    const count = (e.detail?.alerts?.length ?? 0);
+    if (badge) {
+      if (count > 0) {
+        badge.textContent = count;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+  });
+})();
+
+// Ellipsoid visibility event (from alert panel toggle)
+document.addEventListener('novasentinel:ellipsoid-toggle', (e) => {
+  _showEllipsoids = e.detail.visible;
+  _ellipsoids.forEach(m => { m.visible = e.detail.visible; });
+});
+
+// Search fly-to event — camera zooms to the selected satellite
+document.addEventListener('novasentinel:search-fly', (e) => {
+  const noradId = String(e.detail?.noradId ?? '');
+  _selectedNoradId = noradId;
+  _followCamera    = false;   // reset follow on new selection
+
+  if (!camera || !controls || !cloud) return; // Guard against early clicks
+
+  // Immediately update colors and sizes in the point cloud
+  updateCataloguePositions(cloud, _posMap, {
+    colorFn: satelliteColor,
+    selectedNoradId: _selectedNoradId,
+  });
+
+  // Calculate and display the orbital trajectory line
+  const record = _tleMap.get(noradId);
+  if (record?.satrec) {
+    updateOrbitLineGeometry(orbitLine, record.satrec, new Date());
+    const pos = _posMap.get(noradId);
+    if (pos) orbitLine.material.color.copy(satelliteColor(pos, noradId));
+  } else {
+    orbitLine.visible = false;
+  }
+
+  // Guard: need a valid propagated position with lat/lon
+  const pos = _posMap.get(noradId);
+  if (!pos || pos.lat == null) {
+    console.warn('[main] No lat/lon position for satellite', noradId, '— skipping fly-to');
+    return;
+  }
+
+  // Convert geodetic lat/lon → scene units (globe radius = 1)
+  const satWorldObj = geoToWorld(pos.lat, pos.lon, pos.altKm, 1);
+  const satWorld = new THREE.Vector3(satWorldObj.x, satWorldObj.y, satWorldObj.z);
+
+  // Fly camera to a point above the satellite using the dedicated flyToPoint helper
+  flyToPoint(camera, controls, satWorld, { distance: 0.45 });
+});
+
+// Follow-mode toggle from the result card
+document.addEventListener('novasentinel:follow-toggle', (e) => {
+  _followCamera = e.detail?.follow ?? false;
+});
+
+// Search clear event — restores all satellites to original visibility and hides orbit path
+document.addEventListener('novasentinel:search-clear', () => {
+  _selectedNoradId = null;
+  orbitLine.visible = false;
+  
+  // Immediately update colors and sizes back to normal
+  updateCataloguePositions(cloud, _posMap, {
+    colorFn: satelliteColor,
+    selectedNoradId: null,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. Space-Track CDM polling
+// ═══════════════════════════════════════════════════════════════════════════
+
+const identity = import.meta.env.VITE_SPACETRACK_IDENTITY;
+const password = import.meta.env.VITE_SPACETRACK_PASSWORD;
+
+if (!identity || !password) {
+  console.warn('[main] Space-Track credentials missing — CDM panel will be empty.');
+} else {
+  const ok = await loginSpaceTrack(identity, password);
+  if (ok) startNormalPolling();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. Graceful shutdown
+// ═══════════════════════════════════════════════════════════════════════════
 
 window.addEventListener('beforeunload', () => {
+  stopLoop();
   propagator.stop();
+  disposeModel(_pocModel);
+  earth.dispose();
+  ctx.dispose();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. Service Worker — offline TLE/CDM caching
+// ═══════════════════════════════════════════════════════════════════════════
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(reg => console.info('[SW] Registered, scope:', reg.scope))
+      .catch(err => console.warn('[SW] Registration failed:', err.message));
+  });
+}
+
