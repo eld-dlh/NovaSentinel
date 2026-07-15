@@ -1596,3 +1596,20 @@ aside[style*="display:none"] {
   font-weight: 500;
   color: var(--accent);
 }
+
+/* ── CDM-only satellite badge (shown in satellite details panel) ── */
+.src-cdm-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #ffa726;
+  background: rgba(255, 167, 38, 0.08);
+  border: 1px solid rgba(255, 167, 38, 0.25);
+  border-radius: 6px;
+  cursor: help;
+}

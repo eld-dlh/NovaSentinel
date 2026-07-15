@@ -60,7 +60,7 @@ function _buildHTML(tip) {
         ${tip.pocFormatted}
       </span>
       <span class="cjcard-tier-label" style="${pocStyle}">${tip.tier}</span>
-      <span class="cjcard-cdmid">${tip.cdmId}</span>
+      <span class="cjcard-cdmid" title="Space-Track CDM ID — unique identifier for this Conjunction Data Message">CDM&nbsp;${tip.cdmId}</span>
     </div>
 
     <div class="cjcard-sats">

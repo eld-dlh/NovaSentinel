@@ -402,21 +402,34 @@ function _cdmToConjunction(cdm) {
 async function _scoreCDMs(records) {
   if (records.length === 0) return [];
 
-  // When the ML model is available use it for scoring.
+  // When the ML model is available use it to SUPPLEMENT missing PC values,
+  // but NEVER override an authoritative raw CDM PC from Space-Track.
+  // The raw PC is produced by the 18th SCS/LeoLabs conjunction analysis
+  // pipeline — it is always more accurate than our local ML model.
   if (_pocModel) {
-    const conjs   = records.map(_cdmToConjunction);
-    const vectors = conjs.map(buildFeatureVector);
-    const scores  = await batchInferPoC(_pocModel, vectors);
-    return records.map((cdm, i) => ({ cdm, pocScore: scores[i] }));
+    const conjs    = records.map(_cdmToConjunction);
+    const vectors  = conjs.map(buildFeatureVector);
+    const mlScores = await batchInferPoC(_pocModel, vectors);
+    return records.map((cdm, i) => {
+      const rawPC  = cdm.PC != null ? parseFloat(cdm.PC)  : NaN;
+      const mlScore = mlScores[i] ?? NaN;
+      // Prefer the authoritative raw CDM PC when available.
+      // Fall back to ML score only when PC is null/missing.
+      const pocScore = isFinite(rawPC)
+        ? rawPC
+        : (isFinite(mlScore) ? mlScore : null);
+      return { cdm, pocScore };
+    });
   }
 
-  // Fallback: use the raw PC field from Space-Track CDM data so risk dots
-  // still appear on the globe even when the TF.js model hasn't loaded.
+  // Fallback (no ML model): use the raw PC field from Space-Track CDM data so
+  // risk dots still appear on the globe even when the TF.js model hasn't loaded.
   return records.map(cdm => ({
     cdm,
     pocScore: cdm.PC != null ? parseFloat(cdm.PC) : null,
   })).filter(s => s.pocScore != null && !isNaN(s.pocScore));
 }
+
 
 function _rebuildEllipsoids(records) {
   clearEllipsoids(ellipsoidGroup);

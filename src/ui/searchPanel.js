@@ -256,19 +256,32 @@ function _showResultCard(rec) {
   const tierLabel = _tierLabel(tier);
   const tierKey   = tier.toLowerCase();  // 'red' | 'amber' | 'green' | 'unknown'
 
+  // Detect virtual CDM stubs — these are satellites from conjunction data that
+  // are NOT in the active TLE catalogue, so orbital data is placeholder only.
+  const isVirtual = !!rec.isVirtual;
+
   const alt  = pos?.altKm?.toFixed(1)   ?? '—';
   const spd  = pos?.speed?.toFixed(3)   ?? '—';
-  const inc  = rec.inclination != null   ? `${rec.inclination.toFixed(2)}°`  : '—';
-  const ecc  = rec.eccentricity != null  ? rec.eccentricity.toFixed(5)        : '—';
-  const lat  = pos?.lat != null          ? `${pos.lat.toFixed(2)}°`          : '—';
-  const lon  = pos?.lon != null          ? `${pos.lon.toFixed(2)}°`          : '—';
-  const period = rec.meanMotion
-    ? `${(1440 / rec.meanMotion).toFixed(1)} min` : '—';
+  // Only show real orbital elements; CDM stubs have placeholder 0 values
+  const inc  = isVirtual ? 'N/A' : (rec.inclination  != null ? `${rec.inclination.toFixed(2)}°`  : '—');
+  const ecc  = isVirtual ? 'N/A' : (rec.eccentricity != null ?  rec.eccentricity.toFixed(5)        : '—');
+  const lat  = pos?.lat != null  ? `${pos.lat.toFixed(2)}°` : '—';
+  const lon  = pos?.lon != null  ? `${pos.lon.toFixed(2)}°` : '—';
+  // meanMotion=15 is a placeholder in CDM stubs — don't show a fake period
+  const period = isVirtual ? 'N/A'
+    : (rec.meanMotion ? `${(1440 / rec.meanMotion).toFixed(1)} min` : '—');
 
   const pocDisplay = poc != null ? poc.toExponential(3) : 'N/A';
   const pocBadgeBg = poc != null
     ? `background:${color}22; border-color:${color}; color:${color};`
     : `background:transparent; border-color:var(--text-dim); color:var(--text-dim);`;
+
+  // CDM-only badge (shown when satellite has no real TLE/propagated position)
+  const cdmBadge = isVirtual
+    ? `<div class="src-cdm-badge" title="This satellite was identified via a Conjunction Data Message only. No live TLE propagation is available.">
+        ⚠️ CDM-only — no live position
+       </div>`
+    : '';
 
   const contentHtml = `
     <div class="src-card-header">
@@ -296,6 +309,8 @@ function _showResultCard(rec) {
     <div class="src-card-risk-bar-wrap">
       <div class="src-card-risk-bar" style="${_riskBarStyle(poc)}"></div>
     </div>
+
+    ${cdmBadge}
 
     <div class="src-card-stats">
       <div class="src-stat">
@@ -337,6 +352,7 @@ function _showResultCard(rec) {
       </button>
     </div>
   `;
+
 
   // Inject into the content area (after the drag handle), preserving the handle
   let contentDiv = _resultCardEl.querySelector('#src-card-content');
