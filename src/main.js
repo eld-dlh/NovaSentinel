@@ -40,7 +40,7 @@ import { createEarth }                                from './viz/earth.js';
 import { createCatalogueCloud, updateCataloguePositions, geoToWorld } from './viz/catalogue.js';
 import { createUncertaintyEllipsoid, orientEllipsoidRTN,
          clearEllipsoids, pickEllipsoid, buildEllipsoidTooltip } from './viz/ellipsoid.js';
-import { pocToColor }                                 from './viz/riskColors.js';
+import { pocToColor, POC_THRESHOLDS }                 from './viz/riskColors.js';
 import { flyToConjunction, flyToPoint, resetCamera } from './viz/cameraControls.js';
 import { createOrbitLine, updateOrbitLineGeometry }   from './viz/orbit.js';
 import * as THREE                                     from 'three';
@@ -92,7 +92,7 @@ let _followCamera    = false;  // camera-follow mode
 
 // ── Colour palette per object type ──────────────────────────────────────────
 const COLOR_PAYLOAD  = new THREE.Color(0x4fc3f7);   // cyan-blue  — active satellites
-const COLOR_DEBRIS   = new THREE.Color(0xff6b35);   // orange-red — debris (most common)
+const COLOR_DEBRIS   = new THREE.Color(0xffa040);   // vivid orange — debris
 const COLOR_ROCKET   = new THREE.Color(0xb39ddb);   // soft purple — rocket bodies
 const COLOR_UNKNOWN  = new THREE.Color(0x78909c);   // blue-grey  — unclassified
 
@@ -103,7 +103,7 @@ function satelliteColor(pos, noradId) {
       // Dimmed color: let's get the base color and scale it down
       let base;
       const poc = _pocMap.get(noradId) ?? null;
-      if (poc != null) {
+      if (poc != null && poc >= POC_THRESHOLDS.GREEN_LIMIT) {
         base = pocToColor(poc);
       } else {
         const type = (pos.objectType ?? '').toUpperCase();
@@ -123,9 +123,12 @@ function satelliteColor(pos, noradId) {
     }
   }
 
-  // 1. PoC-flagged objects override type colour with risk colour
+  // 1. PoC-flagged objects override type colour with risk colour.
+  // Only apply when poc is at or above the GREEN threshold (≥1e-4) so that
+  // sub-threshold CDM-touched debris objects keep their orange type colour
+  // instead of being painted vivid red.
   const poc = _pocMap.get(noradId) ?? null;
-  if (poc != null) return pocToColor(poc);
+  if (poc != null && poc >= POC_THRESHOLDS.GREEN_LIMIT) return pocToColor(poc);
 
   // 2. Colour by object type for quick visual differentiation
   const type = (pos.objectType ?? '').toUpperCase();
@@ -392,11 +395,22 @@ function _cdmToConjunction(cdm) {
 }
 
 async function _scoreCDMs(records) {
-  if (!_pocModel || records.length === 0) return [];
-  const conjs   = records.map(_cdmToConjunction);
-  const vectors = conjs.map(buildFeatureVector);
-  const scores  = await batchInferPoC(_pocModel, vectors);
-  return records.map((cdm, i) => ({ cdm, pocScore: scores[i] }));
+  if (records.length === 0) return [];
+
+  // When the ML model is available use it for scoring.
+  if (_pocModel) {
+    const conjs   = records.map(_cdmToConjunction);
+    const vectors = conjs.map(buildFeatureVector);
+    const scores  = await batchInferPoC(_pocModel, vectors);
+    return records.map((cdm, i) => ({ cdm, pocScore: scores[i] }));
+  }
+
+  // Fallback: use the raw PC field from Space-Track CDM data so risk dots
+  // still appear on the globe even when the TF.js model hasn't loaded.
+  return records.map(cdm => ({
+    cdm,
+    pocScore: cdm.PC != null ? parseFloat(cdm.PC) : null,
+  })).filter(s => s.pocScore != null && !isNaN(s.pocScore));
 }
 
 function _rebuildEllipsoids(records) {
@@ -440,13 +454,70 @@ onCDMUpdate(async (records, fetchedAt) => {
   console.info(`[main] CDM update — ${records.length} records`);
   _cdmRecords = records;
 
-  // ML scoring
+  // ML scoring (falls back to raw CDM PC when model is unavailable)
   const scored = await _scoreCDMs(records);
-  for (const { cdm, pocScore } of scored) {
+  const scoredMap = new Map(scored.map(s => [s.cdm, s.pocScore]));
+
+  for (const cdm of records) {
+    let pocScore = scoredMap.get(cdm) ?? null;
+
+    // Final fallback: derive a synthetic PoC from miss distance so that
+    // every conjunction always produces a visible risk dot on the globe,
+    // even when neither the ML model nor the CDM PC field is available.
+    if (pocScore == null || pocScore < 1e-6) {
+      const missKm = parseFloat(cdm.MISS_DISTANCE ?? 0);
+      if      (missKm > 0 && missKm < 0.2) pocScore = 1.5e-3;  // RED   — < 200 m
+      else if (missKm >= 0.2 && missKm < 5) pocScore = 2e-4;   // AMBER — < 5 km
+      else if (missKm >= 5  && missKm < 20) pocScore = 1e-4;   // GREEN — < 20 km
+      // Beyond 20 km: not concerning, leave pocScore null → type colour
+    }
+
+    if (pocScore == null || pocScore < 1e-6) continue;
+
     const id1 = String(cdm.SAT1_NORAD_CAT_ID ?? '');
     const id2 = String(cdm.SAT2_NORAD_CAT_ID ?? '');
     if (id1) _pocMap.set(id1, Math.max(_pocMap.get(id1) ?? 0, pocScore));
     if (id2) _pocMap.set(id2, Math.max(_pocMap.get(id2) ?? 0, pocScore));
+
+    // Register virtual TLE records if they are missing in the active/debris lists
+    // so they are fully searchable in the UI by name or NORAD ID
+    if (id1 && !_tleMap.has(id1)) {
+      _tleMap.set(id1, {
+        noradId: id1,
+        name: cdm.SAT1_OBJECT_NAME ?? cdm.SAT_1_NAME ?? cdm.SAT1_OBJECT_DESIGNATOR ?? `SAT-${id1}`,
+        inclination: parseFloat(cdm.SAT1_INCLINATION ?? 0),
+        eccentricity: 0,
+        meanMotion: 15,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+    if (id2 && !_tleMap.has(id2)) {
+      _tleMap.set(id2, {
+        noradId: id2,
+        name: cdm.SAT2_OBJECT_NAME ?? cdm.SAT_2_NAME ?? cdm.SAT2_OBJECT_DESIGNATOR ?? `DEBRIS-${id2}`,
+        inclination: parseFloat(cdm.SAT2_INCLINATION ?? 0),
+        eccentricity: 0,
+        meanMotion: 15,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+
+    // Sync positions in _posMap so that camera fly-to / track can target them
+    const pos1 = _posMap.get(id1);
+    const pos2 = _posMap.get(id2);
+    if (pos1 && !pos2) {
+      _posMap.set(id2, {
+        ...pos1,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase()
+      });
+    } else if (pos2 && !pos1) {
+      _posMap.set(id1, {
+        ...pos2,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase()
+      });
+    }
 
     // Persist to Django when PoC exceeds the minimum threshold (1e-6)
     if (pocScore >= 1e-6) {
@@ -463,6 +534,16 @@ onCDMUpdate(async (records, fetchedAt) => {
         cdmId:          cdm.CDM_ID ?? '',
       });
     }
+  }
+
+  // ── Immediately refresh GPU colour buffer so risk dots appear now, not
+  // in 30 s when the next propagation cycle fires.
+  if (_posMap.size > 0) {
+    updateCataloguePositions(cloud, _posMap, {
+      colorFn:        satelliteColor,
+      selectedNoradId: _selectedNoradId,
+    });
+    console.info(`[main] Risk colours applied — ${_pocMap.size} objects in pocMap`);
   }
 
   // Sync updated PoC scores to search panel (after all CDMs processed)
