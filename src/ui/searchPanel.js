@@ -14,6 +14,7 @@ import { pocToCSS, pocToTier } from '../viz/riskColors.js';
 let _tleMap  = null;   // Map<noradId, TLERecord>
 let _pocMap  = null;   // Map<noradId, number>
 let _posMap  = null;   // Map<noradId, CachedPosition>
+let _cdmSatMap = null; // Map<noradId, stub> — CDM-only satellites (always searchable)
 
 let _inputEl        = null;
 let _dropEl         = null;
@@ -31,11 +32,13 @@ let _suggestions    = [];
  * @param {Map<string, object>} tleMap   NORAD→TLERecord
  * @param {Map<string, number>} pocMap   NORAD→PoC score
  * @param {Map<string, object>} posMap   NORAD→CachedPosition
+ * @param {Map<string, object>} [cdmSatMap]  NORAD→CDM stub (separate index for CDM satellites)
  */
-export function updateSearchData(tleMap, pocMap, posMap) {
-  _tleMap = tleMap;
-  _pocMap = pocMap;
-  _posMap = posMap;
+export function updateSearchData(tleMap, pocMap, posMap, cdmSatMap) {
+  _tleMap    = tleMap;
+  _pocMap    = pocMap;
+  _posMap    = posMap;
+  _cdmSatMap = cdmSatMap ?? null;
 }
 
 /**
@@ -84,19 +87,42 @@ export function initSearch() {
 // ── Search logic ──────────────────────────────────────────────────────────────
 
 function _search(query) {
-  if (!_tleMap || !query) return [];
+  if (!query) return [];
   const q = query.trim().toLowerCase();
   if (!q) return [];
 
   const results = [];
-  for (const [id, rec] of _tleMap) {
-    const nameMatch  = rec.name?.toLowerCase().includes(q);
-    const noradMatch = id.toLowerCase().includes(q);
-    if (nameMatch || noradMatch) {
-      results.push(rec);
-      if (results.length >= 8) break;
+  const seen = new Set();
+
+  // Search the main TLE catalogue first
+  if (_tleMap) {
+    for (const [id, rec] of _tleMap) {
+      const idStr     = String(id);            // defensive: TLE parsers may use numeric keys
+      const nameMatch  = rec.name?.toLowerCase().includes(q);
+      const noradMatch = idStr.includes(q);
+      if ((nameMatch || noradMatch) && !seen.has(idStr)) {
+        seen.add(idStr);
+        results.push(rec);
+        if (results.length >= 8) break;
+      }
     }
   }
+
+  // Also search the dedicated CDM satellite index so conjunction satellites
+  // are always findable even if they're missing from the main TLE map.
+  if (_cdmSatMap && results.length < 8) {
+    for (const [id, rec] of _cdmSatMap) {
+      const idStr     = String(id);
+      const nameMatch  = rec.name?.toLowerCase().includes(q);
+      const noradMatch = idStr.includes(q);
+      if ((nameMatch || noradMatch) && !seen.has(idStr)) {
+        seen.add(idStr);
+        results.push(rec);
+        if (results.length >= 8) break;
+      }
+    }
+  }
+
   return results;
 }
 

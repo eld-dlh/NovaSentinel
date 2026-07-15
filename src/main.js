@@ -89,6 +89,11 @@ let _showEllipsoids = true;
 let _pocModel    = null;
 let _selectedNoradId = null;
 let _followCamera    = false;  // camera-follow mode
+let _cdmFieldsDumped = false;  // one-time debug flag — logs CDM field names on first update
+// Dedicated CDM satellite index — never cleared, always passed to search.
+// Ensures conjunction satellites are searchable even when not in TLE catalogue.
+const _cdmSatMap = new Map();  // noradId(string) → stub {noradId, name, objectType, isVirtual}
+
 
 // ── Colour palette per object type ──────────────────────────────────────────
 const COLOR_PAYLOAD  = new THREE.Color(0x4fc3f7);   // cyan-blue  — active satellites
@@ -239,7 +244,7 @@ onTLEUpdate((records, fetchedAt) => {
   registerTooltipData(cloud, _tleMap, _pocMap);
 
   // Update search panel with fresh TLE catalogue
-  updateSearchData(_tleMap, _pocMap, _posMap);
+  updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
 
   // Load into propagator (active satellites first)
   propagator.load(records);
@@ -305,7 +310,7 @@ setTimeout(() => {
     propagator.update(debrisRecords);
 
     // Update search data with the expanded catalogue
-    updateSearchData(_tleMap, _pocMap, _posMap);
+    updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
 
     console.info(`[main] ✓ ${debrisRecords.length} debris objects refreshed from network`);
   }).catch((err) => {
@@ -424,8 +429,9 @@ function _rebuildEllipsoids(records) {
       const mesh = createUncertaintyEllipsoid(axes, poc);
       mesh.visible = _showEllipsoids;
 
-      // Position at primary object's current location
-      const norad = rec.SAT1_NORAD_CAT_ID;
+      // Position at primary object's current location — SAT_1_ID is the
+      // confirmed Space-Track cdm_public field for the NORAD catalog number.
+      const norad = rec.SAT_1_ID ?? rec.SAT1_OBJECT ?? rec.SAT1_NORAD_CAT_ID;
       const pos   = _posMap.get(String(norad));
       if (pos) {
         const world = new THREE.Vector3(pos.eciPos.x, pos.eciPos.y, pos.eciPos.z)
@@ -450,6 +456,26 @@ function _rebuildEllipsoids(records) {
   }
 }
 
+// ── Name-based NORAD lookup ──────────────────────────────────────────────────
+// cdm_public from Space-Track may not include a numeric NORAD ID field.
+// This searches the already-loaded TLE catalogue by satellite name so that
+// CDM satellites can still be risk-colored and found in the search bar.
+function _findNoradByName(targetName) {
+  if (!targetName) return null;
+  const upper = targetName.trim().toUpperCase();
+  for (const [id, rec] of _tleMap) {
+    if (!id.startsWith('CDM-') && rec.name) {
+      const rn = rec.name.trim().toUpperCase();
+      // Exact match OR the TLE name starts with the CDM name (e.g. TLE has
+      // "COSMOS 1741 DEB", CDM has "COSMOS 1741") — or vice versa.
+      if (rn === upper || rn.startsWith(upper) || upper.startsWith(rn)) {
+        return id;
+      }
+    }
+  }
+  return null;
+}
+
 onCDMUpdate(async (records, fetchedAt) => {
   console.info(`[main] CDM update — ${records.length} records`);
   _cdmRecords = records;
@@ -459,32 +485,59 @@ onCDMUpdate(async (records, fetchedAt) => {
   const scoredMap = new Map(scored.map(s => [s.cdm, s.pocScore]));
 
   for (const cdm of records) {
-    let pocScore = scoredMap.get(cdm) ?? null;
-
-    // Final fallback: derive a synthetic PoC from miss distance so that
-    // every conjunction always produces a visible risk dot on the globe,
-    // even when neither the ML model nor the CDM PC field is available.
-    if (pocScore == null || pocScore < 1e-6) {
-      const missKm = parseFloat(cdm.MISS_DISTANCE ?? 0);
-      if      (missKm > 0 && missKm < 0.2) pocScore = 1.5e-3;  // RED   — < 200 m
-      else if (missKm >= 0.2 && missKm < 5) pocScore = 2e-4;   // AMBER — < 5 km
-      else if (missKm >= 5  && missKm < 20) pocScore = 1e-4;   // GREEN — < 20 km
-      // Beyond 20 km: not concerning, leave pocScore null → type colour
+    // ── One-time field dump so we can confirm the real Space-Track field names
+    if (!_cdmFieldsDumped) {
+      _cdmFieldsDumped = true;
+      console.group('[NovaSentinel] CDM record keys (first record)');
+      Object.keys(cdm).forEach(k => console.log(` ${k}: ${JSON.stringify(cdm[k])}` ));
+      console.groupEnd();
     }
 
-    if (pocScore == null || pocScore < 1e-6) continue;
+    // Confirmed Space-Track cdm_public field names (verified via console dump):
+    //   SAT_1_NAME / SAT_2_NAME  — satellite names
+    //   SAT_1_ID   / SAT_2_ID   — NORAD catalog numbers (numeric strings)
+    //   SAT1_OBJECT_TYPE / SAT2_OBJECT_TYPE — object types (no underscore!)
+    //   MIN_RNG — miss distance in metres
+    const name1 = cdm.SAT_1_NAME ?? cdm.SAT1_CATALOG_NAME ?? cdm.SAT1_OBJECT_NAME ?? '';
+    const name2 = cdm.SAT_2_NAME ?? cdm.SAT2_CATALOG_NAME ?? cdm.SAT2_OBJECT_NAME ?? '';
 
-    const id1 = String(cdm.SAT1_NORAD_CAT_ID ?? '');
-    const id2 = String(cdm.SAT2_NORAD_CAT_ID ?? '');
-    if (id1) _pocMap.set(id1, Math.max(_pocMap.get(id1) ?? 0, pocScore));
-    if (id2) _pocMap.set(id2, Math.max(_pocMap.get(id2) ?? 0, pocScore));
+    // SAT_1_ID is always numeric; fall back to name-match then synthetic key.
+    let id1Raw = cdm.SAT_1_ID ?? cdm.SAT1_OBJECT ?? cdm.SAT1_NORAD_CAT_ID ?? '';
+    let id2Raw = cdm.SAT_2_ID ?? cdm.SAT2_OBJECT ?? cdm.SAT2_NORAD_CAT_ID ?? '';
 
-    // Register virtual TLE records if they are missing in the active/debris lists
-    // so they are fully searchable in the UI by name or NORAD ID
+    // Use the raw ID only if it looks like a number (a real NORAD cat ID)
+    let id1 = (String(id1Raw).trim() !== '' && !isNaN(Number(id1Raw)))
+      ? String(id1Raw).trim()
+      : (_findNoradByName(name1) ?? (name1 ? `CDM-${cdm.CDM_ID}-S1` : ''));
+    let id2 = (String(id2Raw).trim() !== '' && !isNaN(Number(id2Raw)))
+      ? String(id2Raw).trim()
+      : (_findNoradByName(name2) ?? (name2 ? `CDM-${cdm.CDM_ID}-S2` : ''));
+
+    // Always register in the dedicated CDM satellite index so the search panel
+    // can find these satellites regardless of the main TLE catalogue contents.
+    if (id1) {
+      _cdmSatMap.set(id1, {
+        noradId: id1,
+        name:    name1 || `SAT-${id1}`,
+        objectType: (cdm.SAT1_OBJECT_TYPE ?? 'PAYLOAD').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+    if (id2) {
+      _cdmSatMap.set(id2, {
+        noradId: id2,
+        name:    name2 || `DEBRIS-${id2}`,
+        objectType: (cdm.SAT2_OBJECT_TYPE ?? 'DEBRIS').toUpperCase(),
+        isVirtual: true,
+      });
+    }
+
+    // Also add virtual stubs to the main TLE map if not already present
+    // (so tooltip data is available for satellites not in the active catalogue)
     if (id1 && !_tleMap.has(id1)) {
       _tleMap.set(id1, {
         noradId: id1,
-        name: cdm.SAT1_OBJECT_NAME ?? cdm.SAT_1_NAME ?? cdm.SAT1_OBJECT_DESIGNATOR ?? `SAT-${id1}`,
+        name: name1 || `SAT-${id1}`,
         inclination: parseFloat(cdm.SAT1_INCLINATION ?? 0),
         eccentricity: 0,
         meanMotion: 15,
@@ -495,7 +548,7 @@ onCDMUpdate(async (records, fetchedAt) => {
     if (id2 && !_tleMap.has(id2)) {
       _tleMap.set(id2, {
         noradId: id2,
-        name: cdm.SAT2_OBJECT_NAME ?? cdm.SAT_2_NAME ?? cdm.SAT2_OBJECT_DESIGNATOR ?? `DEBRIS-${id2}`,
+        name: name2 || `DEBRIS-${id2}`,
         inclination: parseFloat(cdm.SAT2_INCLINATION ?? 0),
         eccentricity: 0,
         meanMotion: 15,
@@ -503,6 +556,24 @@ onCDMUpdate(async (records, fetchedAt) => {
         isVirtual: true,
       });
     }
+
+    let pocScore = scoredMap.get(cdm) ?? null;
+
+    // Final fallback: derive a synthetic PoC from miss distance so that
+    // every conjunction always produces a visible risk dot on the globe,
+    // even when neither the ML model nor the CDM PC field is available.
+    if (pocScore == null || pocScore < 1e-6) {
+      // MIN_RNG is in metres in Space-Track cdm_public
+      const missM = parseFloat(cdm.MIN_RNG ?? cdm.MISS_DISTANCE ?? 0);
+      if      (missM > 0   && missM < 200)  pocScore = 1.5e-3;  // RED   — < 200 m
+      else if (missM >= 200 && missM < 5000) pocScore = 2e-4;   // AMBER — < 5 km
+      else if (missM >= 5000 && missM < 20000) pocScore = 1e-4; // GREEN — < 20 km
+    }
+
+    if (pocScore == null || pocScore < 1e-6) continue;
+
+    if (id1) _pocMap.set(id1, Math.max(_pocMap.get(id1) ?? 0, pocScore));
+    if (id2) _pocMap.set(id2, Math.max(_pocMap.get(id2) ?? 0, pocScore));
 
     // Sync positions in _posMap so that camera fly-to / track can target them
     const pos1 = _posMap.get(id1);
@@ -522,12 +593,12 @@ onCDMUpdate(async (records, fetchedAt) => {
     // Persist to Django when PoC exceeds the minimum threshold (1e-6)
     if (pocScore >= 1e-6) {
       postConjunctionToDjango({
-        noradPrimary:   String(cdm.SAT1_NORAD_CAT_ID ?? ''),
-        namePrimary:    cdm.SAT1_OBJECT_DESIGNATOR ?? '',
-        noradSecondary: String(cdm.SAT2_NORAD_CAT_ID ?? ''),
-        nameSecondary:  cdm.SAT2_OBJECT_DESIGNATOR ?? '',
+        noradPrimary:   String(cdm.SAT_1_ID ?? ''),
+        namePrimary:    cdm.SAT_1_NAME ?? '',
+        noradSecondary: String(cdm.SAT_2_ID ?? ''),
+        nameSecondary:  cdm.SAT_2_NAME ?? '',
         pocScore:       pocScore,
-        missDistance:   parseFloat(cdm.MISS_DISTANCE ?? 0),
+        missDistance:   parseFloat(cdm.MIN_RNG ?? cdm.MISS_DISTANCE ?? 0),
         relVelocity:    parseFloat(cdm.RELATIVE_SPEED ?? 0),
         tca:            cdm.TCA ?? new Date().toISOString(),
         isDebris:       (cdm.SAT2_OBJECT_TYPE ?? '').toUpperCase().includes('DEBRIS'),
@@ -547,7 +618,8 @@ onCDMUpdate(async (records, fetchedAt) => {
   }
 
   // Sync updated PoC scores to search panel (after all CDMs processed)
-  updateSearchData(_tleMap, _pocMap, _posMap);
+  updateSearchData(_tleMap, _pocMap, _posMap, _cdmSatMap);
+  console.info(`[main] CDM satellite index: ${_cdmSatMap.size} satellites registered`);
 
   // Patch CDM records with ML PoC where CDM field is missing
   const enriched = records.map(r => ({
@@ -578,8 +650,8 @@ initAlertPanel({
     const centerY = window.innerHeight / 2 - 150;
     showConjunctionCard(tip, centerX, centerY);
     // 2. Fly camera to conjunction midpoint
-    const n1  = String(cdmRec.SAT1_NORAD_CAT_ID ?? '');
-    const n2  = String(cdmRec.SAT2_NORAD_CAT_ID ?? '');
+    const n1  = String(cdmRec.SAT_1_ID ?? cdmRec.SAT1_OBJECT ?? '');
+    const n2  = String(cdmRec.SAT_2_ID ?? cdmRec.SAT2_OBJECT ?? '');
     const p1  = _posMap.get(n1);
     const p2  = _posMap.get(n2);
     if (p1 && p2) {

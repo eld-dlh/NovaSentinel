@@ -73,6 +73,15 @@ function _buildHTML(tip) {
       <span class="cjcard-sat secondary" title="${tip.sat2Name}">${tip.sat2Name}</span>
     </div>
 
+    <div class="cjcard-ids">
+      <span class="cjcard-id-primary" title="Primary NORAD / Designator">
+        NORAD ${tip.sat1Id ?? tip.sat1Designator ?? '—'}
+      </span>
+      <span class="cjcard-id-secondary" title="Secondary NORAD / Designator">
+        NORAD ${tip.sat2Id ?? tip.sat2Designator ?? '—'}
+      </span>
+    </div>
+
     <div class="cjcard-stats">
       <div class="cjcard-stat">
         <span class="cjcard-stat-label">TCA</span>
@@ -126,7 +135,7 @@ function _attachDrag(card) {
   handle.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     card.style.left = `${e.clientX - ox}px`;
-    card.style.top  = `${e.clientY - oy}px`;
+    card.style.top = `${e.clientY - oy}px`;
   });
 
   handle.addEventListener('pointerup', () => { dragging = false; });
@@ -155,22 +164,22 @@ export function showConjunctionCard(tip, x, y) {
   // Clamp position: keep card inside viewport
   card.classList.remove('hidden');
   card.style.left = 'auto';
-  card.style.top  = 'auto';
+  card.style.top = 'auto';
 
   // Initially position, then clamp after layout
-  card.style.right  = 'auto';
+  card.style.right = 'auto';
   card.style.bottom = 'auto';
 
   // Apply initial position (offset from click)
   const offsetX = 14;
   const offsetY = 14;
   requestAnimationFrame(() => {
-    const W  = window.innerWidth;
-    const H  = window.innerHeight;
-    const CW = card.offsetWidth  + 16;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const CW = card.offsetWidth + 16;
     const CH = card.offsetHeight + 16;
     card.style.left = `${Math.min(x + offsetX, W - CW)}px`;
-    card.style.top  = `${Math.min(y + offsetY, H - CH)}px`;
+    card.style.top = `${Math.min(y + offsetY, H - CH)}px`;
   });
 
   _attachDrag(card);

@@ -30,14 +30,14 @@ export function exportAlertsCSV(records, filename) {
   const rows = records.map(r => [
     csvEscape(r.CDM_ID               ?? ''),
     csvEscape(r.TCA                   ?? ''),
-    csvEscape(r.SAT1_NORAD_CAT_ID     ?? ''),
-    csvEscape(r.SAT1_OBJECT_NAME      ?? r.SAT1_OBJECT_DESIGNATOR ?? ''),
-    csvEscape(r.SAT2_NORAD_CAT_ID     ?? ''),
-    csvEscape(r.SAT2_OBJECT_NAME      ?? r.SAT2_OBJECT_DESIGNATOR ?? ''),
-    csvEscape(r.MISS_DISTANCE         ?? ''),
-    csvEscape(r.PC                    ?? ''),
-    csvEscape(r.SAT2_OBJECT_TYPE      ?? ''),
-    csvEscape(r.RELATIVE_SPEED        ?? ''),
+    csvEscape(r.SAT_1_ID            ?? r.SAT1_NORAD_CAT_ID ?? ''),
+    csvEscape(r.SAT_1_NAME           ?? r.SAT1_CATALOG_NAME ?? r.SAT1_OBJECT_DESIGNATOR ?? ''),
+    csvEscape(r.SAT_2_ID            ?? r.SAT2_NORAD_CAT_ID ?? ''),
+    csvEscape(r.SAT_2_NAME           ?? r.SAT2_CATALOG_NAME ?? r.SAT2_OBJECT_DESIGNATOR ?? ''),
+    csvEscape(r.MIN_RNG              ?? r.MISS_DISTANCE ?? ''),
+    csvEscape(r.PC                   ?? ''),
+    csvEscape(r.SAT2_OBJECT_TYPE     ?? ''),
+    csvEscape(r.RELATIVE_SPEED       ?? ''),
   ].join(','));
 
   const csv  = [HEADERS.join(','), ...rows].join('\r\n');
