@@ -49,18 +49,15 @@ const GROUP_URLS = {
   brightest: `${CELESTRAK_BASE_URL}?GROUP=visual&FORMAT=tle`,      // ~100 brightest objects
 
   // Communications constellations
-  starlink: `${CELESTRAK_BASE_URL}?GROUP=starlink&FORMAT=tle`,
-  oneweb: `${CELESTRAK_BASE_URL}?GROUP=oneweb&FORMAT=tle`,
-  iridium: `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
+  starlink:        `${CELESTRAK_BASE_URL}?GROUP=starlink&FORMAT=tle`,
+  oneweb:          `${CELESTRAK_BASE_URL}?GROUP=oneweb&FORMAT=tle`,
+  iridium:         `${CELESTRAK_BASE_URL}?GROUP=iridium&FORMAT=tle`,
 
-  // ── Debris groups (TLE format) ───────────────────────────────────────────
-  // Each group corresponds to a major historic fragmentation event.
-  // These use CELESTRAK_PROXY_BASE so requests go through the Vite /celestrak proxy,
-  // avoiding CORS errors in the browser dev environment.
-  debris_fengyun:   `${CELESTRAK_PROXY_BASE}?GROUP=fengyun-1c-debris&FORMAT=tle`, // Fengyun-1C ASAT (2007)
-  debris_iridium33: `${CELESTRAK_PROXY_BASE}?GROUP=iridium-33-debris&FORMAT=tle`,  // Iridium-33 collision (2009)
-  debris_cosmos2251:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-2251-debris&FORMAT=tle`, // Cosmos-2251 collision (2009)
-  debris_cosmos1408:`${CELESTRAK_PROXY_BASE}?GROUP=cosmos-1408-debris&FORMAT=tle`, // Cosmos-1408 ASAT (2021)
+  // Debris
+  debris_fengyun:   `${CELESTRAK_BASE_URL}?GROUP=1999-025&FORMAT=tle`,    // Fengyun-1C debris field
+  debris_iridium33: `${CELESTRAK_BASE_URL}?GROUP=iridium-33-debris&FORMAT=tle`,
+  debris_cosmos2251:`${CELESTRAK_BASE_URL}?GROUP=cosmos-2251-debris&FORMAT=tle`,
+  debris_cosmos1408:`${CELESTRAK_BASE_URL}?GROUP=cosmos-1408-debris&FORMAT=tle`,
 };
 
 /**
