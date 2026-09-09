@@ -172,6 +172,7 @@ export function parseTLEText(text) {
         satrec,
         noradId,
         intlDesignator,
+        objectType:     'PAYLOAD',
         epoch:          parseTLEEpoch(epochStr),
         bstar,
         inclination,

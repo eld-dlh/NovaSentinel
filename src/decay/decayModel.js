@@ -17,7 +17,8 @@
 //  - Brain.js docs: LSTMTimeStep input shape → [[n], [n], ...] (each step is
 //    an array of `inputSize` numbers).
 
-import { LSTMTimeStep } from 'brain.js';
+import brainjs from 'brain.js';
+const { LSTMTimeStep } = brainjs.recurrent;
 import { meanMotionToAlt } from './sequences.js';
 
 // ---------------------------------------------------------------------------
@@ -105,18 +106,23 @@ export function trainDecayModel(sequences, {
     return { net, trainLog: { iterations: 0, error: Infinity } };
   }
 
-  const logCallback = onProgress
-    ? (detail) => onProgress(detail)
-    : (log ? (d) => console.log(`[decayModel] iter=${d.iterations} err=${d.error.toFixed(6)}`) : undefined);
-
-  const trainLog = net.train(data, {
+  // brain.js v2: `callback` can act as an early-stop hook if it returns a
+  // truthy value. Only attach it when the caller explicitly wants progress
+  // events (onProgress). For plain logging use `log` + `logPeriod` only.
+  const trainOpts = {
     iterations,
     learningRate,
-    log:     !!logCallback,
+    log:       log && !onProgress,   // built-in console logging when no callback needed
     logPeriod: 50,
-    callbackPeriod: onProgress ? 50 : undefined,
-    callback: logCallback,
-  });
+    errorThresh: 1e-5,               // stop early if error drops below this
+  };
+
+  if (onProgress) {
+    trainOpts.callbackPeriod = 50;
+    trainOpts.callback       = (detail) => { onProgress(detail); };  // void return
+  }
+
+  const trainLog = net.train(data, trainOpts);
 
   console.info(
     `[decayModel] Training complete — ` +

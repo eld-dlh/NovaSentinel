@@ -142,7 +142,7 @@ export function geoToWorld(latDeg, lonDeg, altKm, globeRadius = 1) {
 export function createCatalogueCloud(scene, opts = {}) {
   const {
     maxObjects   = DEFAULT_MAX_OBJECTS,
-    defaultColor = new THREE.Color(0x4fc3f7),
+    defaultColor = new THREE.Color(0x00e676),
   } = opts;
 
   // ── Pre-allocate typed arrays ─────────────────────────────────────────────
